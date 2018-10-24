@@ -77,7 +77,7 @@ func TestTreeDel(t *testing.T) {
 
 	p0, _ := tr.a.(*SeqAlloc).b.Read(0, 3*Page)
 	t.Logf("err: %v", tr.err)
-	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
+	//	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
 	for i := 0; i < 6; i++ {
 		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
 	}
@@ -87,19 +87,8 @@ func TestTreeDel(t *testing.T) {
 
 	p0, _ = tr.a.(*SeqAlloc).b.Read(0, 6*Page)
 	t.Logf("err: %v", tr.err)
-	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
-	for i := 0; i < 6; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
-	}
-
-	return
-
-	log.Printf("del key1")
-	tr.Del([]byte("key1"))
-
-	p0, _ = tr.a.(*SeqAlloc).b.Read(0, 6*Page)
-	t.Logf("err: %v", tr.err)
-	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
+	//	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
+	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
 	for i := 0; i < 6; i++ {
 		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
 	}
