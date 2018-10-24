@@ -44,9 +44,9 @@ func (t *tree) pageput(off int64, p []byte, i int, k, v []byte) (loff, roff int6
 		if err != nil {
 			return
 		}
-		if t.pageflag(p, fBranch) {
-			t.pagesetflag(l, fBranch)
-			t.pagesetflag(r, fBranch)
+		if f := t.pageflags(p); true {
+			t.pagesetflag(l, f)
+			t.pagesetflag(r, f)
 		}
 		if i <= m {
 			t.pagemove(r, p, 0, m, n)
@@ -57,12 +57,14 @@ func (t *tree) pageput(off int64, p []byte, i int, k, v []byte) (loff, roff int6
 				t.pageinsert(l, i, k, v)
 			} else {
 				t.pagemove(l, p, 0, 0, i)
+				t.pagesetsize(l, i)
 				t.pageinsert(l, i, k, v)
 				t.pagemove(l, p, i+1, i, m)
 				t.pagesetsize(l, m+1)
 			}
 		} else {
 			t.pagemove(r, p, 0, m, i)
+			t.pagesetsize(r, i-m)
 			t.pageinsert(r, i-m, k, v)
 			t.pagemove(r, p, i+1, i, n)
 			t.pagesetsize(r, n-m+1)
@@ -83,6 +85,7 @@ func (t *tree) pageput(off int64, p []byte, i int, k, v []byte) (loff, roff int6
 			t.pageinsert(l, i, k, v)
 		} else {
 			t.pagemove(l, p, 0, 0, i)
+			t.pagesetsize(l, i)
 			t.pageinsert(l, i, k, v)
 			t.pagemove(l, p, i+1, i, n)
 			t.pagesetsize(l, n+1)

@@ -59,22 +59,25 @@ func (t *tree) Put(k, v []byte) {
 		}
 
 		i, eq = t.search(p, k)
-		s[d] |= keylink(i)
-		d++
 
-		log.Printf("put s[%d] = %#x; i: %d  k '%s' eq %v", d-1, kl, i, k, eq)
+		log.Printf("put s[%d] = %#x; i: %d  k '%s' eq %v", d, kl, i, k, eq)
 
 		if !t.pageflag(p, fBranch) {
 			break
 		}
 
+		if i == t.pagesize(p) {
+			i--
+		}
+		s[d] |= keylink(i)
+		d++
+
 		kl = keylink(t.pagelink(p, i))
 	}
 	// we at leaf
-	d--
 	off := s[d].Off(mask)
 
-	log.Printf("put d=%d off=%d i=%v eq=%v", d, off, i, eq)
+	log.Printf("put d=%d off=%#4x i=%v eq=%v", d, off, i, eq)
 
 	if eq {
 		off, p, _, err = t.pagedel(off, p, i)
@@ -343,6 +346,158 @@ func (t *tree) Get(k []byte) []byte {
 	}
 
 	return t.pagevalue(p, i)
+}
+
+func (t *tree) Next(k []byte) []byte {
+	if t.err != nil {
+		return nil
+	}
+	var s [32]keylink
+
+	mask := t.pagemask
+	kl := keylink(t.root)
+
+	var d, i int
+	var p []byte
+	var err error
+	var eq, back bool
+	for {
+		s[d] = kl
+
+		p, err = t.a.Read(kl.Off(mask))
+		if err != nil {
+			t.err = err
+			return nil
+		}
+		if p == nil {
+			//	break
+			t.err = errors.New("no page")
+			return nil
+		}
+
+		i, eq = t.search(p, k)
+		log.Printf("nxt s[%d] = %#x; i: %d  k '%s' eq %v back %v", d, kl, i, k, eq, back)
+		if back {
+			if i == 0 {
+				if d == 0 {
+					return nil
+				}
+				d--
+				kl = s[d]
+				log.Printf("nxt back")
+				continue
+			}
+			back = false
+			i--
+		}
+
+		if !t.pageflag(p, fBranch) {
+			if i == 0 {
+				if d == 0 {
+					return nil
+				}
+				d--
+				log.Printf("nxt back - here")
+				kl = s[d]
+				back = true
+				continue
+			}
+			i--
+			break
+		}
+
+		if i == t.pagesize(p) {
+			i--
+		}
+		s[d] |= keylink(i)
+		d++
+
+		kl = keylink(t.pagelink(p, i))
+	}
+	// we at leaf
+
+	return t.pagekey(p, i)
+}
+
+func (t *tree) Prev(k []byte) []byte {
+	if t.err != nil {
+		return nil
+	}
+	var s [32]keylink
+
+	mask := t.pagemask
+	kl := keylink(t.root)
+
+	var d, i int
+	var p []byte
+	var err error
+	var eq, back bool
+	for {
+		s[d] = kl
+
+		p, err = t.a.Read(kl.Off(mask))
+		if err != nil {
+			t.err = err
+			return nil
+		}
+		if p == nil {
+			//	break
+			t.err = errors.New("no page")
+			return nil
+		}
+
+		if k == nil {
+			i, eq = 0, false
+		} else {
+			i, eq = t.search(p, k)
+		}
+		log.Printf("prv s[%d] = %#x; i: %d  k '%s' eq %v back %v", d, kl, i, k, eq, back)
+		if back {
+			i++
+			if i == t.pagesize(p) {
+				if d == 0 {
+					return nil
+				}
+				d--
+				kl = s[d]
+				log.Printf("prv back")
+				continue
+			}
+			back = false
+		}
+
+		if !t.pageflag(p, fBranch) {
+			if eq {
+				i++
+				if i == t.pagesize(p) {
+					if d == 0 {
+						return nil
+					}
+					d--
+					log.Printf("prv back - here")
+					kl = s[d]
+					back = true
+					continue
+				}
+			}
+			break
+		}
+
+		if i == t.pagesize(p) {
+			i--
+		}
+		s[d] |= keylink(i)
+		d++
+
+		kl = keylink(t.pagelink(p, i))
+	}
+	// we at leaf
+
+	if i == t.pagesize(p) {
+		return nil
+	}
+
+	return t.pagekey(p, i)
 }
 
 func (t *tree) search(p []byte, k []byte) (int, bool) {

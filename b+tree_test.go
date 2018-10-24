@@ -104,3 +104,102 @@ func TestTreeDel(t *testing.T) {
 		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
 	}
 }
+
+func TestTreePutReverse(t *testing.T) {
+	const Page = 0x20
+	tr := newTestBPTree(6, Page)
+
+	tr.Put([]byte("key4"), []byte("val__4"))
+	tr.Put([]byte("key3"), []byte("val__3"))
+	tr.Put([]byte("key2"), []byte("val__2"))
+
+	p0, _ := tr.a.(*SeqAlloc).b.Read(0, 3*Page)
+	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
+	for i := 0; i < 6; i++ {
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+	}
+
+	tr.Put([]byte("key1"), []byte("val__1"))
+
+	p0, _ = tr.a.(*SeqAlloc).b.Read(0, 3*Page)
+	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
+	for i := 0; i < 6; i++ {
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+	}
+}
+
+func TestTreeNext(t *testing.T) {
+	const Page = 0x20
+	tr := newTestBPTree(6, Page)
+
+	tr.Put([]byte("key4"), []byte("val__4"))
+	tr.Put([]byte("key3"), []byte("val__3"))
+	tr.Put([]byte("key2"), []byte("val__2"))
+	tr.Put([]byte("key1"), []byte("val__1"))
+
+	p0, _ := tr.a.(*SeqAlloc).b.Read(0, 3*Page)
+	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
+	for i := 0; i < 6; i++ {
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+	}
+
+	k := []byte(nil)
+	k = tr.Next(k)
+	assert.Equal(t, []byte("key1"), k)
+
+	k = tr.Next(k)
+	assert.Equal(t, []byte("key2"), k)
+
+	k = tr.Next(k)
+	assert.Equal(t, []byte("key3"), k)
+
+	k = tr.Next(k)
+	assert.Equal(t, []byte("key4"), k)
+
+	k = tr.Next(k)
+	assert.Equal(t, []byte(nil), k)
+
+	k = tr.Next([]byte("k"))
+	assert.Equal(t, []byte("key1"), k)
+
+	k = tr.Next([]byte("key44"))
+	assert.Equal(t, []byte(nil), k)
+}
+
+func TestTreePrev(t *testing.T) {
+	const Page = 0x20
+	tr := newTestBPTree(6, Page)
+
+	tr.Put([]byte("key4"), []byte("val__4"))
+	tr.Put([]byte("key3"), []byte("val__3"))
+	tr.Put([]byte("key2"), []byte("val__2"))
+	tr.Put([]byte("key1"), []byte("val__1"))
+
+	p0, _ := tr.a.(*SeqAlloc).b.Read(0, 3*Page)
+	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
+	for i := 0; i < 6; i++ {
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+	}
+
+	k := []byte(nil)
+	k = tr.Prev(k)
+	assert.Equal(t, []byte("key4"), k)
+
+	k = tr.Prev(k)
+	assert.Equal(t, []byte("key3"), k)
+
+	k = tr.Prev(k)
+	assert.Equal(t, []byte("key2"), k)
+
+	k = tr.Prev(k)
+	assert.Equal(t, []byte("key1"), k)
+
+	k = tr.Prev(k)
+	assert.Equal(t, []byte(nil), k)
+
+	k = tr.Prev([]byte("k"))
+	assert.Equal(t, []byte(nil), k)
+
+	k = tr.Prev([]byte("key22"))
+	assert.Equal(t, []byte("key2"), k)
+}
