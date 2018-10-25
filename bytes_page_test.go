@@ -15,7 +15,7 @@ func newTestBPTree(n int, Page int64) *tree {
 }
 
 func TestPageInsert1(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(2, Page)
 
 	_, p, _ := tr.a.Alloc()
@@ -33,13 +33,13 @@ func TestPageInsert1(t *testing.T) {
 
 	n, sp = tr.p.(BytesPage).sizespace(p)
 	assert.Equal(t, 2, n)
-	assert.Equal(t, 2, sp)
+	assert.Equal(t, 34, sp)
 
 	t.Logf("dump\n%v", hex.Dump(p))
 }
 
 func TestPageInsert2(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(2, Page)
 
 	_, p, _ := tr.a.Alloc()
@@ -69,7 +69,7 @@ func TestPageInsert2(t *testing.T) {
 }
 
 func TestPageUninsert1(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(2, Page)
 
 	_, p, _ := tr.a.Alloc()
@@ -90,7 +90,7 @@ func TestPageUninsert1(t *testing.T) {
 }
 
 func TestPageUninsert2(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(2, Page)
 
 	_, p, _ := tr.a.Alloc()
@@ -111,7 +111,7 @@ func TestPageUninsert2(t *testing.T) {
 }
 
 func TestPageMove(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(4, Page)
 
 	soff, s, _ := tr.a.Alloc()
@@ -169,18 +169,18 @@ func TestPageMove(t *testing.T) {
 }
 
 func TestPagePut(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(4, Page)
 
 	root, _ := tr.a.Read(0)
 
-	loff, _, l, r, _ := tr.p.Put(0, root, 0, []byte("key1"), []byte("val_1"))
+	loff, _, l, r, _ := tr.p.Put(0, root, 0, []byte("key1"), []byte("val_1_______________"))
 	assert.Nil(t, r)
 	assert.Equal(t, int64(0), loff)
 
 	t.Logf("dump\n%v", hex.Dump(l))
 
-	loff, _, l, r, _ = tr.p.Put(loff, l, 1, []byte("key3"), []byte("val_333"))
+	loff, _, l, r, _ = tr.p.Put(loff, l, 1, []byte("key3"), []byte("val_333_______________"))
 	assert.Nil(t, r)
 	assert.Equal(t, int64(0), loff)
 
@@ -188,7 +188,7 @@ func TestPagePut(t *testing.T) {
 
 	n, sp := tr.p.(BytesPage).sizespace(l)
 	assert.Equal(t, 2, n)
-	assert.Equal(t, 4, sp)
+	assert.Equal(t, 6, sp)
 
 	loff, roff, l, r, _ := tr.p.Put(loff, l, 1, []byte("key2"), []byte("val_22"))
 	assert.NotNil(t, r)
@@ -200,7 +200,7 @@ func TestPagePut(t *testing.T) {
 
 	k, v := tr.p.KeyValue(l, 0)
 	assert.Equal(t, []byte("key1"), k)
-	assert.Equal(t, []byte("val_1"), v)
+	assert.Equal(t, []byte("val_1_______________"), v)
 
 	k, v = tr.p.KeyValue(l, 1)
 	assert.Equal(t, []byte("key2"), k)
@@ -208,11 +208,11 @@ func TestPagePut(t *testing.T) {
 
 	k, v = tr.p.KeyValue(r, 0)
 	assert.Equal(t, []byte("key3"), k)
-	assert.Equal(t, []byte("val_333"), v)
+	assert.Equal(t, []byte("val_333_______________"), v)
 }
 
 func TestPageDel(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(4, Page)
 
 	_, p, _ := tr.a.Alloc()
@@ -220,8 +220,8 @@ func TestPageDel(t *testing.T) {
 		return
 	}
 
-	tr.p.(BytesPage).insert(p, 0, []byte("key1"), []byte("val_1"))
-	tr.p.(BytesPage).insert(p, 1, []byte("key2"), []byte("val___2"))
+	tr.p.(BytesPage).insert(p, 0, []byte("key1"), []byte("val____________1"))
+	tr.p.(BytesPage).insert(p, 1, []byte("key2"), []byte("val_____________________2"))
 
 	t.Logf("dump\n%v", hex.Dump(p))
 
@@ -239,7 +239,7 @@ func TestPageDel(t *testing.T) {
 }
 
 func TestPageLinkInsertGet(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	p := make([]byte, Page)
 	tr := &tree{p: BytesPage{}}
 

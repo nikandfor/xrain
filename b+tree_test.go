@@ -9,7 +9,7 @@ import (
 )
 
 func TestTreePut1(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(6, Page)
 
 	tr.Put([]byte("key1"), []byte("val__1"))
@@ -95,7 +95,7 @@ func TestTreeDel(t *testing.T) {
 }
 
 func TestTreePutReverse(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(6, Page)
 
 	tr.Put([]byte("key4"), []byte("val__4"))
@@ -118,7 +118,7 @@ func TestTreePutReverse(t *testing.T) {
 }
 
 func TestTreeNext(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(6, Page)
 
 	assert.Nil(t, tr.Next(nil))
@@ -159,7 +159,7 @@ func TestTreeNext(t *testing.T) {
 }
 
 func TestTreePrev(t *testing.T) {
-	const Page = 0x20
+	const Page = 0x40
 	tr := newTestBPTree(6, Page)
 
 	assert.Nil(t, tr.Prev(nil))

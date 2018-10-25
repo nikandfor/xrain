@@ -133,6 +133,7 @@ func (t BytesPage) Del(off int64, p []byte, i int) (loff int64, l []byte, reb bo
 	}
 	n := t.Size(p)
 	if loff == off {
+		log.Printf("uninsert %d/%d at %x %v", i, n, off, t.DumpHex(p))
 		t.uninsert(l, i)
 	} else {
 		t.move(l, p, 0, 0, i)
@@ -261,8 +262,6 @@ func (t BytesPage) move(r, s []byte, ri, im, iM int) {
 	sz := end - off
 	dst := t.offget(r, ri-1) - sz
 
-	log.Printf("dst %x off:end %x:%x  sz %x  ri %d <- %d %d", dst, off, end, sz, ri, im, iM)
-
 	copy(r[dst:], s[off:end])
 
 	diff := dst - off
@@ -278,6 +277,7 @@ func (t BytesPage) insert(p []byte, i int, k, v []byte) {
 	n := t.Size(p)
 
 	st := t.offget(p, n-1)
+	log.Printf("insert to %x fr %x end %x sz %x  inkv %d %d %x %x  pg %v", st-size, st, end, size, i, n, k, v, t.Dump(p))
 	copy(p[st-size:], p[st:end])
 
 	for j := n; j > i; j-- {
@@ -439,9 +439,29 @@ func (t BytesPage) Dump(p []byte) string {
 	fmt.Fprintf(&buf, "size %d %#4x %c:", n, len(p), brc)
 	for i := 0; i < n; i++ {
 		if br {
-			fmt.Fprintf(&buf, " [%s -> %#4x]", t.Key(p, i), t.Int64(p, i))
+			fmt.Fprintf(&buf, " [%q -> %#4x]", t.Key(p, i), t.Int64(p, i))
 		} else {
-			fmt.Fprintf(&buf, " [%s -> %s]", t.Key(p, i), t.Value(p, i))
+			fmt.Fprintf(&buf, " [%q -> %q]", t.Key(p, i), t.Value(p, i))
+		}
+	}
+	fmt.Fprintf(&buf, "\n")
+	return buf.String()
+}
+
+func (t BytesPage) DumpHex(p []byte) string {
+	var buf bytes.Buffer
+	n := t.Size(p)
+	br := t.Flag(p, fBranch)
+	brc := 'l'
+	if br {
+		brc = 'b'
+	}
+	fmt.Fprintf(&buf, "size %d %#4x %c:", n, len(p), brc)
+	for i := 0; i < n; i++ {
+		if br {
+			fmt.Fprintf(&buf, " [%x -> %#4x]", t.Key(p, i), t.Int64(p, i))
+		} else {
+			fmt.Fprintf(&buf, " [%x -> %x]", t.Key(p, i), t.Value(p, i))
 		}
 	}
 	fmt.Fprintf(&buf, "\n")

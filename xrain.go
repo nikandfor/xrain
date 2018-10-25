@@ -169,7 +169,7 @@ func (d *DB) View(f func(tx *Tx) error) error {
 }
 
 func (d *DB) Update(f func(tx *Tx) error) error {
-	a, err := NewTreeAlloc(d.b, d.page, d.free)
+	a, err := NewTreeAlloc(d.b, d.page, d.free, d.ver+1, d.ver)
 	if err != nil {
 		return err
 	}

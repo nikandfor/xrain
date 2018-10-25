@@ -1,6 +1,9 @@
 package xrain
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"log"
+)
 
 var zeroPage = make([]byte, 1<<20) // 1M
 
@@ -16,12 +19,16 @@ type (
 	}
 
 	TreeAlloc struct {
-		b    Back
-		t    *tree
-		page int64
-		free int64
-		w    map[int64]struct{}
-		buf  [8]byte
+		b        Back
+		t        *tree
+		page     int64
+		free     int64
+		ver      int64
+		vbar     int64
+		exhusted bool
+		last     []byte
+		w        map[int64]struct{}
+		buf      [16]byte
 	}
 
 	SeqAlloc struct {
@@ -38,7 +45,7 @@ type (
 	}
 )
 
-func NewTreeAlloc(b Back, page, root int64) (*TreeAlloc, error) {
+func NewTreeAlloc(b Back, page, root, ver, vbar int64) (*TreeAlloc, error) {
 	f, err := b.Len()
 	if err != nil {
 		return nil, err
@@ -47,6 +54,8 @@ func NewTreeAlloc(b Back, page, root int64) (*TreeAlloc, error) {
 		b:    b,
 		page: page,
 		free: f,
+		ver:  ver,
+		vbar: vbar,
 		w:    make(map[int64]struct{}),
 	}
 	a.t, err = NewBPTree(root, a, BytesPage{a: a})
@@ -58,15 +67,34 @@ func NewTreeAlloc(b Back, page, root int64) (*TreeAlloc, error) {
 }
 
 func (a *TreeAlloc) Alloc() (off int64, p []byte, err error) {
-	for f := a.t.Next(nil); f != nil; f = a.t.Next(f) {
-		a.t.Del(f)
-		if a.t.err != nil {
-			return 0, nil, a.t.err
+	defer func() {
+		log.Printf("all res %#4x %v", off, err)
+	}()
+	log.Printf("all req")
+	if !a.exhusted {
+		for a.last = a.t.Next(a.last); a.last != nil; a.last = a.t.Next(a.last) {
+			ver := a.t.Int64(a.last)
+			if ver >= a.vbar {
+				continue
+			}
+
+			log.Printf("all got page %x", a.last)
+
+			k := a.last
+
+			a.t.Del(k)
+			if a.t.err != nil {
+				return 0, nil, a.t.err
+			}
+
+			off = int64(binary.BigEndian.Uint64(k))
+			log.Printf("all deleted %x -> off %x", k, off)
+			a.w[off] = struct{}{}
+			p, err = a.b.Read(off, a.page)
+			return
 		}
-		off = int64(binary.BigEndian.Uint64(f))
-		a.w[off] = struct{}{}
-		p, err = a.b.Read(off, a.page)
-		return
+		log.Printf("all exhusted")
+		a.exhusted = true
 	}
 	off = a.free
 	a.free += a.page
@@ -98,7 +126,8 @@ func (a *TreeAlloc) Free(off int64) error {
 	delete(a.w, off)
 	buf := a.buf[:]
 	binary.BigEndian.PutUint64(buf, uint64(off))
-	a.t.Put(buf, nil)
+	binary.BigEndian.PutUint64(buf[8:], uint64(a.ver))
+	a.t.Put(buf[:8], buf[8:])
 	return a.t.err
 }
 

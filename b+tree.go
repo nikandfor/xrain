@@ -1,6 +1,7 @@
 package xrain
 
 import (
+	"encoding/binary"
 	"errors"
 	"log"
 	"sort"
@@ -222,11 +223,7 @@ func (t *tree) Del(k []byte) {
 	}
 
 	d--
-	off, p, err = t.a.Write(off, p)
-	if err != nil {
-		t.err = err
-		return
-	}
+	log.Printf("write2 %x %v", off, BytesPage{}.DumpHex(p))
 	off, p, reb, err = t.p.Del(off, p, i)
 	if err != nil {
 		t.err = err
@@ -239,12 +236,8 @@ func (t *tree) Del(k []byte) {
 
 	for d--; d >= 0; d-- {
 		off := s[d].Off(mask)
-		off, p, err = t.a.Write(off, nil)
-		if err != nil {
-			t.err = err
-			return
-		}
 		i = s[d].Index(mask)
+		p = nil
 
 		log.Printf("del d: %d  off %#4x (%#4x) i %d  reb %v chk %s %#4x", d, off, s[d], i, reb, chk, link)
 
@@ -260,6 +253,14 @@ func (t *tree) Del(k []byte) {
 			link = off
 			chk = t.p.LastKey(p)
 			continue
+		}
+
+		if p == nil {
+			p, err = t.a.Read(off)
+			if err != nil {
+				t.err = err
+				return
+			}
 		}
 
 		li, ri, loff, roff := t.p.Siblings(off, p, i)
@@ -348,6 +349,12 @@ func (t *tree) Get(k []byte) []byte {
 	}
 
 	return t.p.Value(p, i)
+}
+
+func (t *tree) Int64(k []byte) int64 {
+	v := t.Get(k)
+	r := int64(binary.BigEndian.Uint64(v))
+	return r
 }
 
 func (t *tree) Next(k []byte) []byte {
