@@ -157,7 +157,7 @@ func (d *DB) swapRoot() error {
 
 func (d *DB) View(f func(tx *Tx) error) error {
 	a := NewNoAlloc(d.b, d.page)
-	t, err := NewBPTree(d.data, a)
+	t, err := NewBPTree(d.data, a, BytesPage{a})
 	if err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func (d *DB) Update(f func(tx *Tx) error) error {
 	if err != nil {
 		return err
 	}
-	t, err := NewBPTree(d.data, a)
+	t, err := NewBPTree(d.data, a, BytesPage{a})
 	if err != nil {
 		return err
 	}

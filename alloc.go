@@ -49,7 +49,7 @@ func NewTreeAlloc(b Back, page, root int64) (*TreeAlloc, error) {
 		free: f,
 		w:    make(map[int64]struct{}),
 	}
-	a.t, err = NewBPTree(root, a)
+	a.t, err = NewBPTree(root, a, BytesPage{a: a})
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +58,7 @@ func NewTreeAlloc(b Back, page, root int64) (*TreeAlloc, error) {
 }
 
 func (a *TreeAlloc) Alloc() (off int64, p []byte, err error) {
-	f := a.t.Next(nil)
-	if f != nil {
+	for f := a.t.Next(nil); f != nil; f = a.t.Next(f) {
 		a.t.Del(f)
 		if a.t.err != nil {
 			return 0, nil, a.t.err

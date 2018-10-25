@@ -32,8 +32,39 @@ const (
 	fBranch = 1 << iota
 )
 
-func (t *tree) pageput(off int64, p []byte, i int, k, v []byte) (loff, roff int64, l, r []byte, err error) {
-	n, sp := t.pagesizespace(p)
+type (
+	PageLayout interface {
+		Size(p []byte) int
+
+		Flag(p []byte, f int) bool
+		Flags(p []byte) int
+		SetFlag(p []byte, f int)
+
+		KeyCmp(p []byte, i int, k []byte) int
+		LastKey(p []byte) []byte
+
+		Int64(p []byte, i int) int64
+		PutInt64(off int64, p []byte, i int, k []byte, v int64) (loff, roff int64, l, r []byte, err error)
+
+		Put(off int64, p []byte, i int, k, v []byte) (loff, roff int64, l, r []byte, err error)
+		Del(off int64, p []byte, i int) (loff int64, l []byte, reb bool, err error)
+		Key(p []byte, i int) []byte
+		Value(p []byte, i int) []byte
+		KeyValue(p []byte, i int) (k, v []byte)
+		KeyValueSize(p []byte, i int) int
+
+		Siblings(off int64, p []byte, i int) (li, ri int, loff, roff int64)
+		Rebalance(loff, roff int64, l, r []byte) (lwoff, rwoff int64, lw, rw []byte, err error)
+		NeedRebalance(p []byte) bool
+	}
+
+	BytesPage struct {
+		a Allocator
+	}
+)
+
+func (t BytesPage) Put(off int64, p []byte, i int, k, v []byte) (loff, roff int64, l, r []byte, err error) {
+	n, sp := t.sizespace(p)
 	if sp < 3+len(k)+len(v) {
 		m := n / 2
 
@@ -45,36 +76,36 @@ func (t *tree) pageput(off int64, p []byte, i int, k, v []byte) (loff, roff int6
 		if err != nil {
 			return
 		}
-		if f := t.pageflags(p); true {
-			t.pagesetflag(l, f)
-			t.pagesetflag(r, f)
+		if f := t.Flags(p); true {
+			t.SetFlag(l, f)
+			t.SetFlag(r, f)
 		}
 		if i <= m {
-			t.pagemove(r, p, 0, m, n)
-			t.pagesetsize(r, n-m)
+			t.move(r, p, 0, m, n)
+			t.setsize(r, n-m)
 
 			if loff == off {
-				t.pagesetsize(l, m)
-				t.pageinsert(l, i, k, v)
+				t.setsize(l, m)
+				t.insert(l, i, k, v)
 			} else {
-				t.pagemove(l, p, 0, 0, i)
-				t.pagesetsize(l, i)
-				t.pageinsert(l, i, k, v)
-				t.pagemove(l, p, i+1, i, m)
-				t.pagesetsize(l, m+1)
+				t.move(l, p, 0, 0, i)
+				t.setsize(l, i)
+				t.insert(l, i, k, v)
+				t.move(l, p, i+1, i, m)
+				t.setsize(l, m+1)
 			}
 		} else {
-			t.pagemove(r, p, 0, m, i)
-			t.pagesetsize(r, i-m)
-			t.pageinsert(r, i-m, k, v)
-			t.pagemove(r, p, i+1, i, n)
-			t.pagesetsize(r, n-m+1)
+			t.move(r, p, 0, m, i)
+			t.setsize(r, i-m)
+			t.insert(r, i-m, k, v)
+			t.move(r, p, i+1, i, n)
+			t.setsize(r, n-m+1)
 
 			if loff == off {
-				t.pagesetsize(l, m)
+				t.setsize(l, m)
 			} else {
-				t.pagemove(l, p, 0, i, m)
-				t.pagesetsize(l, m)
+				t.move(l, p, 0, i, m)
+				t.setsize(l, m)
 			}
 		}
 	} else {
@@ -83,38 +114,36 @@ func (t *tree) pageput(off int64, p []byte, i int, k, v []byte) (loff, roff int6
 			return
 		}
 		if loff == off {
-			t.pageinsert(l, i, k, v)
+			t.insert(l, i, k, v)
 		} else {
-			t.pagemove(l, p, 0, 0, i)
-			t.pagesetsize(l, i)
-			t.pageinsert(l, i, k, v)
-			t.pagemove(l, p, i+1, i, n)
-			t.pagesetsize(l, n+1)
+			t.move(l, p, 0, 0, i)
+			t.setsize(l, i)
+			t.insert(l, i, k, v)
+			t.move(l, p, i+1, i, n)
+			t.setsize(l, n+1)
 		}
 	}
 	return
 }
 
-func (t *tree) pagedel(off int64, p []byte, i int) (loff int64, l []byte, reb bool, err error) {
+func (t BytesPage) Del(off int64, p []byte, i int) (loff int64, l []byte, reb bool, err error) {
 	loff, l, err = t.a.Write(off, p)
 	if err != nil {
 		return
 	}
-	n := t.pagesize(p)
+	n := t.Size(p)
 	if loff == off {
-		t.pageuninsert(l, i)
+		t.uninsert(l, i)
 	} else {
-		t.pagemove(l, p, 0, 0, i)
-		if i+1 < n {
-			t.pagemove(l, p, i, i+1, n)
-		}
-		t.pagesetsize(l, n-1)
+		t.move(l, p, 0, 0, i)
+		t.move(l, p, i, i+1, n)
+		t.setsize(l, n-1)
 	}
-	reb = t.pageneedrebalance(p)
+	reb = t.NeedRebalance(p)
 	return
 }
 
-func (t *tree) pagerebalance(loff, roff int64, l, r []byte) (lwoff, rwoff int64, lw, rw []byte, err error) {
+func (t BytesPage) Rebalance(loff, roff int64, l, r []byte) (lwoff, rwoff int64, lw, rw []byte, err error) {
 	if l == nil {
 		l, err = t.a.Read(loff)
 		if err != nil {
@@ -128,24 +157,24 @@ func (t *tree) pagerebalance(loff, roff int64, l, r []byte) (lwoff, rwoff int64,
 		}
 	}
 
-	ln, lsp := t.pagesizespace(l)
-	rn, rsp := t.pagesizespace(r)
+	ln, lsp := t.sizespace(l)
+	rn, rsp := t.sizespace(r)
 
 	lwoff, lw, err = t.a.Write(loff, l)
 	if err != nil {
 		return
 	}
 	if lwoff != loff {
-		f := t.pageflags(l)
-		t.pagesetflag(lw, f)
+		f := t.Flags(l)
+		t.SetFlag(lw, f)
 	}
 
 	if lsp+rsp+pHead >= len(l) {
 		if lwoff != loff {
-			t.pagemove(lw, l, 0, 0, ln)
+			t.move(lw, l, 0, 0, ln)
 		}
-		t.pagemove(lw, r, ln, 0, rn)
-		t.pagesetsize(lw, ln+rn)
+		t.move(lw, r, ln, 0, rn)
+		t.setsize(lw, ln+rn)
 		return
 	}
 
@@ -154,15 +183,15 @@ func (t *tree) pagerebalance(loff, roff int64, l, r []byte) (lwoff, rwoff int64,
 		return
 	}
 	if rwoff != roff {
-		f := t.pageflags(r)
-		t.pagesetflag(rw, f)
+		f := t.Flags(r)
+		t.SetFlag(rw, f)
 	}
 
 	if lsp < rsp {
 		// l -> r
 		i := ln
 		for lsp < rsp {
-			kvsize := t.pagekeyvaluesize(l, i-1) + 2
+			kvsize := t.KeyValueSize(l, i-1) + 2
 			if lsp+kvsize >= rsp-kvsize {
 				break
 			}
@@ -171,24 +200,24 @@ func (t *tree) pagerebalance(loff, roff int64, l, r []byte) (lwoff, rwoff int64,
 			i--
 		}
 		for j := i; j < ln; j++ {
-			k, v := t.pagekeyvalue(l, j)
-			t.pageinsert(rw, j-i, k, v)
+			k, v := t.KeyValue(l, j)
+			t.insert(rw, j-i, k, v)
 		}
 
 		if rwoff != roff {
-			t.pagemove(rw, r, ln-i, 0, rn)
-			t.pagesetsize(rw, ln-i+rn)
+			t.move(rw, r, ln-i, 0, rn)
+			t.setsize(rw, ln-i+rn)
 		}
 
 		if lwoff != loff {
-			t.pagemove(lw, l, 0, 0, i)
+			t.move(lw, l, 0, 0, i)
 		}
-		t.pagesetsize(lw, i)
+		t.setsize(lw, i)
 	} else {
 		// r -> l
 		i := 0
 		for lsp > rsp {
-			kvsize := t.pagekeyvaluesize(r, i) + 2
+			kvsize := t.KeyValueSize(r, i) + 2
 			if rsp+kvsize >= lsp-kvsize {
 				break
 			}
@@ -198,29 +227,29 @@ func (t *tree) pagerebalance(loff, roff int64, l, r []byte) (lwoff, rwoff int64,
 		}
 
 		if lwoff != loff {
-			t.pagemove(lw, l, 0, 0, ln)
+			t.move(lw, l, 0, 0, ln)
 		}
-		t.pagemove(lw, r, ln, 0, i)
-		t.pagesetsize(lw, ln+i)
+		t.move(lw, r, ln, 0, i)
+		t.setsize(lw, ln+i)
 
-		t.pagemove(rw, r, 0, i, rn)
-		t.pagesetsize(rw, rn-i)
+		t.move(rw, r, 0, i, rn)
+		t.setsize(rw, rn-i)
 	}
 	return
 }
 
-func (t *tree) pagesiblings(off int64, p []byte, i int) (li, ri int, loff, roff int64) {
-	n := t.pagesize(p)
+func (t BytesPage) Siblings(off int64, p []byte, i int) (li, ri int, loff, roff int64) {
+	n := t.Size(p)
 	if i < n-1 && i%2 == 0 {
-		return i, i + 1, t.pagelink(p, i), t.pagelink(p, i+1)
-		//	return t.pagelink(p, i), t.pagelink(p, i+1), nil, nil, nil
+		return i, i + 1, t.Int64(p, i), t.Int64(p, i+1)
+		//	return t.link(p, i), t.link(p, i+1), nil, nil, nil
 	} else {
-		return i - 1, i, t.pagelink(p, i-1), t.pagelink(p, i)
-		//	return t.pagelink(p, i-1), t.pagelink(p, i), nil, nil, nil
+		return i - 1, i, t.Int64(p, i-1), t.Int64(p, i)
+		//	return t.link(p, i-1), t.link(p, i), nil, nil, nil
 	}
 }
 
-func (t *tree) pagemove(r, s []byte, ri, im, iM int) {
+func (t BytesPage) move(r, s []byte, ri, im, iM int) {
 	if im == iM {
 		return
 	}
@@ -243,10 +272,10 @@ func (t *tree) pagemove(r, s []byte, ri, im, iM int) {
 	}
 }
 
-func (t *tree) pageinsert(p []byte, i int, k, v []byte) {
+func (t BytesPage) insert(p []byte, i int, k, v []byte) {
 	end := t.offget(p, i-1)
 	size := 1 + len(k) + len(v)
-	n := t.pagesize(p)
+	n := t.Size(p)
 
 	st := t.offget(p, n-1)
 	copy(p[st-size:], p[st:end])
@@ -264,11 +293,11 @@ func (t *tree) pageinsert(p []byte, i int, k, v []byte) {
 	copy(p[st:], k)
 	copy(p[st+len(k):], v)
 
-	t.pagesetsize(p, n+1)
+	t.setsize(p, n+1)
 }
 
-func (t *tree) pageuninsert(p []byte, i int) {
-	n := t.pagesize(p)
+func (t BytesPage) uninsert(p []byte, i int) {
+	n := t.Size(p)
 	st := t.offget(p, n-1)
 	end := t.offget(p, i)
 	dst := t.offget(p, i-1) - (end - st)
@@ -281,37 +310,37 @@ func (t *tree) pageuninsert(p []byte, i int) {
 		t.offset(p, j, sh+diff)
 	}
 
-	t.pagesetsize(p, n)
+	t.setsize(p, n)
 }
 
-func (t *tree) pageneedrebalance(p []byte) bool {
-	_, sp := t.pagesizespace(p)
+func (t BytesPage) NeedRebalance(p []byte) bool {
+	_, sp := t.sizespace(p)
 	return sp > len(p)/2
 }
 
-func (t *tree) pagelastkey(p []byte) []byte {
-	s := t.pagesize(p)
+func (t BytesPage) LastKey(p []byte) []byte {
+	s := t.Size(p)
 	if s == 0 {
 		return nil
 	}
-	return t.pagekey(p, s-1)
+	return t.Key(p, s-1)
 }
 
-func (t *tree) pagekey(p []byte, i int) []byte {
+func (t BytesPage) Key(p []byte, i int) []byte {
 	st := t.offget(p, i)
 	kl := int(p[st])
 	st++
 	return p[st : st+kl]
 }
 
-func (t *tree) pagevalue(p []byte, i int) []byte {
+func (t BytesPage) Value(p []byte, i int) []byte {
 	st := t.offget(p, i)
 	end := t.offget(p, i-1)
 	kl := int(p[st])
 	return p[st+1+kl : end]
 }
 
-func (t *tree) pagekeyvalue(p []byte, i int) (k, v []byte) {
+func (t BytesPage) KeyValue(p []byte, i int) (k, v []byte) {
 	st := t.offget(p, i)
 	end := t.offget(p, i-1)
 	kl := int(p[st])
@@ -319,43 +348,43 @@ func (t *tree) pagekeyvalue(p []byte, i int) (k, v []byte) {
 	return p[st : st+kl], p[st+kl : end]
 }
 
-func (t *tree) pagekeyvaluesize(p []byte, i int) int {
+func (t BytesPage) KeyValueSize(p []byte, i int) int {
 	st := t.offget(p, i)
 	end := t.offget(p, i-1)
 	return end - st
 }
 
-func (t *tree) pagelink(p []byte, i int) int64 {
+func (t BytesPage) Int64(p []byte, i int) int64 {
 	start := t.offget(p, i)
 	ksize := int(p[start])
 	v := binary.BigEndian.Uint64(p[start+1+ksize:])
 	return int64(v)
 }
 
-func (t *tree) pageinsertlink(p []byte, i int, k []byte, l int64) {
-	buf := t.buf[:8]
-	binary.BigEndian.PutUint64(buf, uint64(l))
-	t.pageinsert(p, i, k, buf)
+func (t BytesPage) insertlink(p []byte, i int, k []byte, l int64) {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(l))
+	t.insert(p, i, k, buf[:])
 }
 
-func (t *tree) pageputlink(off int64, p []byte, i int, k []byte, link int64) (loff, roff int64, l, r []byte, err error) {
-	buf := t.buf[:8]
-	binary.BigEndian.PutUint64(buf, uint64(link))
-	return t.pageput(off, p, i, k, buf)
+func (t BytesPage) PutInt64(off int64, p []byte, i int, k []byte, link int64) (loff, roff int64, l, r []byte, err error) {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(link))
+	return t.Put(off, p, i, k, buf[:])
 }
 
-func (t *tree) pagesize(p []byte) int {
+func (t BytesPage) Size(p []byte) int {
 	return int(p[1])
 }
 
-func (t *tree) pagekeycmp(p []byte, i int, k []byte) int {
+func (t BytesPage) KeyCmp(p []byte, i int, k []byte) int {
 	off := t.offget(p, i)
 	l := int(p[off])
 	off++
 	return bytes.Compare(p[off:off+l], k)
 }
 
-func (t *tree) pagesizespace(p []byte) (int, int) {
+func (t BytesPage) sizespace(p []byte) (int, int) {
 	if p == nil {
 		return 0, len(p) - pHead
 	}
@@ -365,33 +394,33 @@ func (t *tree) pagesizespace(p []byte) (int, int) {
 	return n, end - start
 }
 
-func (t *tree) pagesetsize(p []byte, n int) {
+func (t BytesPage) setsize(p []byte, n int) {
 	p[1] = byte(n)
 }
 
-func (t *tree) pagesetflag(p []byte, f int) {
+func (t BytesPage) SetFlag(p []byte, f int) {
 	p[0] |= byte(f)
 }
 
-func (t *tree) pageflag(p []byte, f int) bool {
+func (t BytesPage) Flag(p []byte, f int) bool {
 	return int(p[0])&f == f
 }
 
-func (t *tree) pageflags(p []byte) int {
+func (t BytesPage) Flags(p []byte) int {
 	return int(p[0])
 }
 
-func (t *tree) offidx(i int) int {
+func (t BytesPage) offidx(i int) int {
 	return pHead + i*pLink
 }
 
-func (t *tree) offset(p []byte, i, off int) {
+func (t BytesPage) offset(p []byte, i, off int) {
 	s := pHead + i*pLink
 	p[s] = byte(off >> 8)
 	p[s+1] = byte(off)
 }
 
-func (t *tree) offget(p []byte, i int) int {
+func (t BytesPage) offget(p []byte, i int) int {
 	if i == -1 {
 		return len(p)
 	}
@@ -399,10 +428,10 @@ func (t *tree) offget(p []byte, i int) int {
 	return int(p[s])<<8 | int(p[s+1])
 }
 
-func (t *tree) pagedump(p []byte) string {
+func (t BytesPage) Dump(p []byte) string {
 	var buf bytes.Buffer
-	n := t.pagesize(p)
-	br := t.pageflag(p, fBranch)
+	n := t.Size(p)
+	br := t.Flag(p, fBranch)
 	brc := 'l'
 	if br {
 		brc = 'b'
@@ -410,9 +439,9 @@ func (t *tree) pagedump(p []byte) string {
 	fmt.Fprintf(&buf, "size %d %#4x %c:", n, len(p), brc)
 	for i := 0; i < n; i++ {
 		if br {
-			fmt.Fprintf(&buf, " [%s -> %#4x]", t.pagekey(p, i), t.pagelink(p, i))
+			fmt.Fprintf(&buf, " [%s -> %#4x]", t.Key(p, i), t.Int64(p, i))
 		} else {
-			fmt.Fprintf(&buf, " [%s -> %s]", t.pagekey(p, i), t.pagevalue(p, i))
+			fmt.Fprintf(&buf, " [%s -> %s]", t.Key(p, i), t.Value(p, i))
 		}
 	}
 	fmt.Fprintf(&buf, "\n")

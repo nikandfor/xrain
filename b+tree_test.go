@@ -23,7 +23,7 @@ func TestTreePut1(t *testing.T) {
 	p0, _ = tr.a.(*SeqAlloc).b.Read(0, 3*Page)
 	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
 	for i := 0; i < 3; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.p.(BytesPage).Dump(p0[i*Page:(i+1)*Page]))
 	}
 
 	v := tr.Get([]byte("key1"))
@@ -46,7 +46,7 @@ func TestTreePut1(t *testing.T) {
 	t.Logf("err: %v", tr.err)
 	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
 	for i := 0; i < 6; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.p.(BytesPage).Dump(p0[i*Page:(i+1)*Page]))
 	}
 
 	v = tr.Get([]byte("key1"))
@@ -79,7 +79,7 @@ func TestTreeDel(t *testing.T) {
 	t.Logf("err: %v", tr.err)
 	//	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
 	for i := 0; i < 6; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.p.(BytesPage).Dump(p0[i*Page:(i+1)*Page]))
 	}
 
 	log.Printf("del key1")
@@ -90,7 +90,7 @@ func TestTreeDel(t *testing.T) {
 	//	t.Logf("dump root:%#x\n%v", tr.root, hex.Dump(p0))
 	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
 	for i := 0; i < 6; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.p.(BytesPage).Dump(p0[i*Page:(i+1)*Page]))
 	}
 }
 
@@ -105,7 +105,7 @@ func TestTreePutReverse(t *testing.T) {
 	p0, _ := tr.a.(*SeqAlloc).b.Read(0, 3*Page)
 	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
 	for i := 0; i < 6; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.p.(BytesPage).Dump(p0[i*Page:(i+1)*Page]))
 	}
 
 	tr.Put([]byte("key1"), []byte("val__1"))
@@ -113,7 +113,7 @@ func TestTreePutReverse(t *testing.T) {
 	p0, _ = tr.a.(*SeqAlloc).b.Read(0, 3*Page)
 	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
 	for i := 0; i < 6; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.p.(BytesPage).Dump(p0[i*Page:(i+1)*Page]))
 	}
 }
 
@@ -132,7 +132,7 @@ func TestTreeNext(t *testing.T) {
 	p0, _ := tr.a.(*SeqAlloc).b.Read(0, 3*Page)
 	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
 	for i := 0; i < 6; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.p.(BytesPage).Dump(p0[i*Page:(i+1)*Page]))
 	}
 
 	k := []byte(nil)
@@ -173,7 +173,7 @@ func TestTreePrev(t *testing.T) {
 	p0, _ := tr.a.(*SeqAlloc).b.Read(0, 3*Page)
 	t.Logf("root: %d %#4x", tr.root/Page, tr.root)
 	for i := 0; i < 6; i++ {
-		t.Logf("page %d %#4x: %v", i, i*Page, tr.pagedump(p0[i*Page:(i+1)*Page]))
+		t.Logf("page %d %#4x: %v", i, i*Page, tr.p.(BytesPage).Dump(p0[i*Page:(i+1)*Page]))
 	}
 
 	k := []byte(nil)
