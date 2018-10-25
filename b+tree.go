@@ -8,7 +8,7 @@ import (
 
 type (
 	tree struct {
-		a Alloc
+		a Allocator
 
 		root     int64
 		pagemask int64
@@ -20,8 +20,8 @@ type (
 	keylink int64 // 1 byte is an overflow indicator, 51 bytes is for page offset, 12 bytes is for index at page (for 4kiB pages)
 )
 
-func NewBPTree(root int64, a Alloc) (*tree, error) {
-	mask := a.Size() - 1
+func NewBPTree(root int64, a Allocator) (*tree, error) {
+	mask := a.Page() - 1
 	t := &tree{
 		a:        a,
 		root:     root,

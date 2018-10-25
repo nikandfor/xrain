@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 )
 
 /*
@@ -99,12 +100,14 @@ func (t *tree) pagedel(off int64, p []byte, i int) (loff int64, l []byte, reb bo
 	if err != nil {
 		return
 	}
-	n := t.pagesize(l)
+	n := t.pagesize(p)
 	if loff == off {
 		t.pageuninsert(l, i)
 	} else {
 		t.pagemove(l, p, 0, 0, i)
-		t.pagemove(l, p, i, i+1, n)
+		if i+1 < n {
+			t.pagemove(l, p, i, i+1, n)
+		}
 		t.pagesetsize(l, n-1)
 	}
 	reb = t.pageneedrebalance(p)
@@ -228,6 +231,8 @@ func (t *tree) pagemove(r, s []byte, ri, im, iM int) {
 	end := t.offget(s, im-1)
 	sz := end - off
 	dst := t.offget(r, ri-1) - sz
+
+	log.Printf("dst %x off:end %x:%x  sz %x  ri %d <- %d %d", dst, off, end, sz, ri, im, iM)
 
 	copy(r[dst:], s[off:end])
 

@@ -121,6 +121,9 @@ func TestTreeNext(t *testing.T) {
 	const Page = 0x20
 	tr := newTestBPTree(6, Page)
 
+	assert.Nil(t, tr.Next(nil))
+	assert.NoError(t, tr.err)
+
 	tr.Put([]byte("key4"), []byte("val__4"))
 	tr.Put([]byte("key3"), []byte("val__3"))
 	tr.Put([]byte("key2"), []byte("val__2"))
@@ -158,6 +161,9 @@ func TestTreeNext(t *testing.T) {
 func TestTreePrev(t *testing.T) {
 	const Page = 0x20
 	tr := newTestBPTree(6, Page)
+
+	assert.Nil(t, tr.Prev(nil))
+	assert.NoError(t, tr.err)
 
 	tr.Put([]byte("key4"), []byte("val__4"))
 	tr.Put([]byte("key3"), []byte("val__3"))
