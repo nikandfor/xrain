@@ -50,20 +50,30 @@ func (t *Tree) find(k []byte) (err error) {
 	for {
 		t.s = append(t.s, keylink(off))
 
-		i, eq = t.search(off, k)
+		i, eq, err = t.search(off, k)
+		if err != nil {
+			return err
+		}
 
-		if i == t.p.Size(off) {
+		if s, err := t.p.Size(off); err != nil {
+			return err
+		} else if s == i {
 			i--
 		}
 
 		t.s[d] |= keylink(i)
 		d++
 
-		if t.p.IsLeaf(off) {
+		if c, err := t.p.IsLeaf(off); err != nil {
+			return err
+		} else if c {
 			break
 		}
 
-		off = t.p.Int64(off, i)
+		off, err = t.p.Int64(off, i)
+		if err != nil {
+			return
+		}
 	}
 	t.eq = eq
 	return nil
@@ -92,7 +102,9 @@ func (t *Tree) out() (err error) {
 
 		// rebalance if needed
 		if r == NilPage {
-			if t.p.NeedRebalance(r) {
+			if c, err := t.p.NeedRebalance(r); err != nil {
+				return err
+			} else if c {
 				i, l, r, err = t.p.Siblings(off, i)
 				if err != nil {
 					return err
@@ -106,7 +118,10 @@ func (t *Tree) out() (err error) {
 		}
 
 		// put left new child
-		lk := t.p.LastKey(l)
+		lk, err := t.p.LastKey(l)
+		if err != nil {
+			return err
+		}
 		pl, pr, err := t.p.PutInt64(off, i, lk, int64(l))
 		if err != nil {
 			return err
@@ -118,7 +133,10 @@ func (t *Tree) out() (err error) {
 			continue
 		}
 
-		rk := t.p.LastKey(r)
+		rk, err := t.p.LastKey(r)
+		if err != nil {
+			return err
+		}
 		// we didn't split parent page yet
 		if pr == NilPage {
 			pl, pr, err = t.p.PutInt64(pl, i+1, rk, int64(r))
@@ -130,7 +148,9 @@ func (t *Tree) out() (err error) {
 		i++
 		var p2 int64
 		// at which page our index are?
-		if m := t.p.Size(pl); i < m {
+		if m, err := t.p.Size(pl); err != nil {
+			return err
+		} else if i < m {
 			pl, p2, err = t.p.PutInt64(pl, i, rk, int64(r))
 		} else {
 			pr, p2, err = t.p.PutInt64(pr, i-m, rk, int64(r))
@@ -203,12 +223,28 @@ func (t *Tree) Get(k []byte) (v []byte, err error) {
 	return t.p.Value(off, i)
 }
 
-func (t *Tree) search(off int64, k []byte) (int, bool) {
-	ln := t.p.Size(off)
+func (t *Tree) search(off int64, k []byte) (int, bool, error) {
+	ln, err := t.p.Size(off)
+	if err != nil {
+		return 0, false, err
+	}
 	i := sort.Search(ln, func(i int) bool {
-		return t.p.KeyCmp(off, i, k) <= 0
+		var c int
+		c, err = t.p.KeyCmp(off, i, k)
+		return c <= 0
 	})
-	return i, i < ln && t.p.KeyCmp(off, i, k) == 0
+	if err != nil {
+		return 0, false, err
+	}
+	var eq bool
+	if i < ln {
+		if c, err := t.p.KeyCmp(off, i, k); err != nil {
+			return 0, false, err
+		} else {
+			eq = c == 0
+		}
+	}
+	return i, eq, nil
 }
 
 func (l keylink) Off(mask int64) int64 {
