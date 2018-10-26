@@ -2,19 +2,21 @@ package xrain
 
 import "io"
 
+const Mb = 1024 * 1024 * 1024
+
 type (
 	Back interface {
-		Read(off, len int64) ([]byte, error)
-		Write(off int64, data []byte) error
-		Size() (int64, error)
+		Load(off, len int64) ([]byte, error)
+		Size() int64
 		Truncate(size int64) error
+		Grow(size int64) error
 		Sync() error
 	}
 
 	MemBack []byte
 )
 
-func (bk *MemBack) Read(off, l int64) ([]byte, error) {
+func (bk *MemBack) Load(off, l int64) ([]byte, error) {
 	b := *bk
 	if len(b) < int(off+l) {
 		if int(off) > len(b) {
@@ -25,32 +27,37 @@ func (bk *MemBack) Read(off, l int64) ([]byte, error) {
 	return b[off : off+l], nil
 }
 
-func (bk *MemBack) Write(off int64, d []byte) error {
-	if len(*bk) < int(off)+len(d) {
-		_ = bk.Truncate(off + int64(len(d)))
-	}
-	copy((*bk)[off:], d)
-	return nil
-}
-
-func (bk *MemBack) Truncate(s int64) error {
+func (bk *MemBack) Grow(s int64) error {
 	b := *bk
 	if len(b) == int(s) {
 		return nil
 	}
-	if int(s) < cap(b) {
-		*bk = b[:s]
+	if int(s) <= cap(b) {
 		return nil
 	}
 	l := cap(b)
 	for l < int(s) {
 		if l < 1024 {
 			l *= 2
+		} else if l < 20*Mb {
+			l += l / 4
+		} else {
+			l += 5 * Mb
+			if m := l % (5 * Mb); m != 0 {
+				l -= m
+			}
 		}
-		l += l / 4
 	}
 	*bk = make([]byte, l)
 	copy(*bk, b)
+	return nil
+}
+
+func (bk *MemBack) Truncate(s int64) error {
+	if int(s) >= cap(*bk) {
+		return bk.Grow(s)
+	}
+	*bk = (*bk)[:s]
 	return nil
 }
 
