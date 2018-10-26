@@ -1,12 +1,10 @@
 package xrain
 
-import "io"
-
 const Mb = 1024 * 1024 * 1024
 
 type (
 	Back interface {
-		Load(off, len int64) ([]byte, error)
+		Load(off, len int64) []byte
 		Size() int64
 		Truncate(size int64) error
 		Grow(size int64) error
@@ -16,15 +14,12 @@ type (
 	MemBack []byte
 )
 
-func (bk *MemBack) Load(off, l int64) ([]byte, error) {
+func (bk *MemBack) Load(off, l int64) []byte {
 	b := *bk
 	if len(b) < int(off+l) {
-		if int(off) > len(b) {
-			return nil, io.EOF
-		}
-		return b[off:], io.EOF
+		panic("out of range")
 	}
-	return b[off : off+l], nil
+	return b[off : off+l]
 }
 
 func (bk *MemBack) Grow(s int64) error {

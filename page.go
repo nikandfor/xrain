@@ -11,22 +11,22 @@ type (
 	PageLayout interface {
 		PageSize() int64
 
-		Size(p int64) (int, error)
-		IsLeaf(p int64) (bool, error)
+		Size(p int64) int
+		IsLeaf(p int64) bool
 
-		Key(p int64, i int) ([]byte, error)
-		KeyCmp(p int64, i int, k []byte) (int, error)
-		LastKey(p int64) ([]byte, error)
+		Key(p int64, i int) []byte
+		KeyCmp(p int64, i int, k []byte) int
+		LastKey(p int64) []byte
 
-		Value(p int64, i int) ([]byte, error)
-		Int64(p int64, i int) (int64, error)
+		Value(p int64, i int) []byte
+		Int64(p int64, i int) int64
 
 		Put(p int64, i int, k, v []byte) (l, r int64, _ error)
 		PutInt64(p int64, i int, k []byte, v int64) (l, r int64, _ error)
 		Del(p int64, i int) (int64, error)
 
-		NeedRebalance(p int64) (bool, error)
-		Siblings(p int64, i int) (li int, l, r int64, _ error)
+		NeedRebalance(p int64) bool
+		Siblings(p int64, i int) (li int, l, r int64)
 		Rebalance(l, r int64) (l_, r_ int64, _ error)
 	}
 
@@ -55,28 +55,19 @@ func (l *BaseLayout) PageSize() int64 {
 	return l.page
 }
 
-func (l *BaseLayout) Size(off int64) (int, error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return 0, err
-	}
-	return int(p[0])&0x7f<<8 | int(p[1]), nil
+func (l *BaseLayout) Size(off int64) int {
+	p := l.b.Load(off, l.page)
+	return int(p[0])&0x7f<<8 | int(p[1])
 }
 
 func (l *BaseLayout) IsLeaf(off int64) (bool, error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return false, err
-	}
+	p := l.b.Load(off, l.page)
 	return p[0]&0x80 != 0, nil
 }
 
 func (l *BaseLayout) Write(off int64, p []byte) (_ int64, _ []byte, err error) {
 	if p == nil {
-		p, err = l.b.Load(off, l.page)
-		if err != nil {
-			return 0, nil, err
-		}
+		p = l.b.Load(off, l.page)
 	}
 	if l.getver(p) == l.ver {
 		return off, p, nil
@@ -91,10 +82,8 @@ new:
 	if err != nil {
 		return 0, nil, err
 	}
-	p, err = l.b.Load(off, l.page)
-	if err != nil {
-		return 0, nil, err
-	}
+	p1 := l.b.Load(off, l.page)
+	copy(p1, p)
 
 	l.endf += l.page
 
@@ -140,48 +129,36 @@ func (l *KVLayout) setoff(p []byte, i int, off int) {
 	p[s+1] = byte(off)
 }
 
-func (l *KVLayout) KeyCmp(off int64, i int, k []byte) (int, error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return 0, err
-	}
+func (l *KVLayout) KeyCmp(off int64, i int, k []byte) int {
+	p := l.b.Load(off, l.page)
 	st := l.dataoff(p, i)
 	kl := int(p[st])
 	st++
-	return bytes.Compare(p[st:st+kl], k), nil
+	return bytes.Compare(p[st:st+kl], k)
 }
 
-func (l *KVLayout) LastKey(off int64) ([]byte, error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return nil, err
-	}
+func (l *KVLayout) LastKey(off int64) []byte {
+	p := l.b.Load(off, l.page)
 	n := l.size(p)
 	st := l.dataoff(p, n-1)
 	kl := int(p[st])
 	st++
-	return p[st : st+kl], nil
+	return p[st : st+kl]
 }
 
-func (l *KVLayout) Value(off int64, i int) ([]byte, error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return nil, err
-	}
+func (l *KVLayout) Value(off int64, i int) []byte {
+	p := l.b.Load(off, l.page)
 	st := l.dataoff(p, i)
 	end := l.dataoff(p, i-1)
 	kl := int(p[st])
 	st++
 	st += kl
-	return p[st:end], nil
+	return p[st:end]
 }
 
-func (l *KVLayout) Int64(off int64, i int) (int64, error) {
-	v, err := l.Value(off, i)
-	if err != nil {
-		return 0, err
-	}
-	return int64(binary.BigEndian.Uint64(v)), nil
+func (l *KVLayout) Int64(off int64, i int) int64 {
+	v := l.Value(off, i)
+	return int64(binary.BigEndian.Uint64(v))
 }
 
 func (l *KVLayout) Del(off int64, i int) (int64, error) {
@@ -203,10 +180,7 @@ func (l *KVLayout) Del(off int64, i int) (int64, error) {
 }
 
 func (l *KVLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return 0, 0, err
-	}
+	p := l.b.Load(off, l.page)
 	n := l.size(p)
 	b := l.dataoff(p, n-1)
 	sp := b - (16 + n*2)
@@ -294,22 +268,16 @@ func (l *KVLayout) move(rp, p []byte, ri, i, I int) {
 	}
 }
 
-func (l *KVLayout) NeedRebalance(off int64) (bool, error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return false, err
-	}
+func (l *KVLayout) NeedRebalance(off int64) bool {
+	p := l.b.Load(off, l.page)
 	n := l.size(p)
 	b := l.dataoff(p, n-1)
 	sp := b - (16 + n*2)
-	return sp < len(p)/2, nil
+	return sp < len(p)/2
 }
 
-func (l *KVLayout) Siblings(off int64, i int) (li int, loff, roff int64, err error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return
-	}
+func (l *KVLayout) Siblings(off int64, i int) (li int, loff, roff int64) {
+	p := l.b.Load(off, l.page)
 	n := l.size(p)
 
 	var ri int
@@ -319,14 +287,8 @@ func (l *KVLayout) Siblings(off int64, i int) (li int, loff, roff int64, err err
 		li, ri = i-1, i
 	}
 
-	loff, err = l.Int64(off, li)
-	if err != nil {
-		return
-	}
-	roff, err = l.Int64(off, ri)
-	if err != nil {
-		return
-	}
+	loff = l.Int64(off, li)
+	roff = l.Int64(off, ri)
 
 	return
 }
@@ -376,33 +338,27 @@ func (l *KVLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) {
 	return
 }
 
-func (l *IntLayout) KeyCmp(off int64, i int, k []byte) (int, error) {
+func (l *IntLayout) KeyCmp(off int64, i int, k []byte) int {
 	if len(k) != 8 {
 		panic(len(k))
 	}
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return 0, err
-	}
+	p := l.b.Load(off, l.page)
 	s := 16 + i*8
-	return bytes.Compare(p[s:s+8], k), nil
+	return bytes.Compare(p[s:s+8], k)
 }
 
-func (l *IntLayout) LastKey(off int64) ([]byte, error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return nil, err
-	}
+func (l *IntLayout) LastKey(off int64) []byte {
+	p := l.b.Load(off, l.page)
 	n := l.size(p)
 	st := 16 + (n-1)*8
-	return p[st : st+8], nil
+	return p[st : st+8]
 }
 
-func (l *IntLayout) Value(off int64, i int) ([]byte, error) {
+func (l *IntLayout) Value(off int64, i int) []byte {
 	panic("unsupported")
 }
 
-func (l *IntLayout) Int64(off int64, i int) (int64, error) {
+func (l *IntLayout) Int64(off int64, i int) int64 {
 	panic("unsupported")
 }
 
@@ -425,10 +381,7 @@ func (l *IntLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err er
 	if len(k) != 8 {
 		panic(k)
 	}
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return 0, 0, err
-	}
+	p := l.b.Load(off, l.page)
 	n := l.size(p)
 	st := 16 + n*8
 	if st < len(p) {
@@ -483,24 +436,18 @@ func (l *IntLayout) PutInt64(off int64, i int, k []byte, v int64) (loff, roff in
 	panic("unsupported")
 }
 
-func (l *IntLayout) NeedRebalance(off int64) (bool, error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return false, err
-	}
+func (l *IntLayout) NeedRebalance(off int64) bool {
+	p := l.b.Load(off, l.page)
 	n := l.size(p)
 	end := 16 + n*8
 	if end < len(p)/2 {
-		return true, nil
+		return true
 	}
-	return false, nil
+	return false
 }
 
-func (l *IntLayout) Siblings(off int64, i int) (li int, loff, roff int64, err error) {
-	p, err := l.b.Load(off, l.page)
-	if err != nil {
-		return
-	}
+func (l *IntLayout) Siblings(off int64, i int) (li int, loff, roff int64) {
+	p := l.b.Load(off, l.page)
 	n := l.size(p)
 
 	var ri int
@@ -510,14 +457,8 @@ func (l *IntLayout) Siblings(off int64, i int) (li int, loff, roff int64, err er
 		li, ri = i-1, i
 	}
 
-	loff, err = l.Int64(off, li)
-	if err != nil {
-		return
-	}
-	roff, err = l.Int64(off, ri)
-	if err != nil {
-		return
-	}
+	loff = l.Int64(off, li)
+	roff = l.Int64(off, ri)
 
 	return
 }

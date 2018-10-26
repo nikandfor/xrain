@@ -40,7 +40,7 @@ func NewTree(p PageLayout, root int64) *Tree {
 	return t
 }
 
-func (t *Tree) find(k []byte) (err error) {
+func (t *Tree) find(k []byte) {
 	t.s = t.s[:0]
 	t.l = NilPage
 	t.r = NilPage
@@ -50,33 +50,23 @@ func (t *Tree) find(k []byte) (err error) {
 	for {
 		t.s = append(t.s, keylink(off))
 
-		i, eq, err = t.search(off, k)
-		if err != nil {
-			return err
+		i, eq = t.search(off, k)
+
+		if t.p.IsLeaf(off) {
+			t.s[d] |= keylink(i)
+			break
 		}
 
-		if s, err := t.p.Size(off); err != nil {
-			return err
-		} else if s == i {
+		if t.p.Size(off) == i {
 			i--
 		}
 
 		t.s[d] |= keylink(i)
 		d++
 
-		if c, err := t.p.IsLeaf(off); err != nil {
-			return err
-		} else if c {
-			break
-		}
-
-		off, err = t.p.Int64(off, i)
-		if err != nil {
-			return
-		}
+		off = t.p.Int64(off, i)
 	}
 	t.eq = eq
-	return nil
 }
 
 func (t *Tree) out() (err error) {
@@ -102,13 +92,8 @@ func (t *Tree) out() (err error) {
 
 		// rebalance if needed
 		if r == NilPage {
-			if c, err := t.p.NeedRebalance(r); err != nil {
-				return err
-			} else if c {
-				i, l, r, err = t.p.Siblings(off, i)
-				if err != nil {
-					return err
-				}
+			if t.p.NeedRebalance(r) {
+				i, l, r = t.p.Siblings(off, i)
 				l, r, err = t.p.Rebalance(l, r)
 				if err != nil {
 					return err
@@ -118,10 +103,7 @@ func (t *Tree) out() (err error) {
 		}
 
 		// put left new child
-		lk, err := t.p.LastKey(l)
-		if err != nil {
-			return err
-		}
+		lk := t.p.LastKey(l)
 		pl, pr, err := t.p.PutInt64(off, i, lk, int64(l))
 		if err != nil {
 			return err
@@ -133,10 +115,7 @@ func (t *Tree) out() (err error) {
 			continue
 		}
 
-		rk, err := t.p.LastKey(r)
-		if err != nil {
-			return err
-		}
+		rk := t.p.LastKey(r)
 		// we didn't split parent page yet
 		if pr == NilPage {
 			pl, pr, err = t.p.PutInt64(pl, i+1, rk, int64(r))
@@ -148,9 +127,7 @@ func (t *Tree) out() (err error) {
 		i++
 		var p2 int64
 		// at which page our index are?
-		if m, err := t.p.Size(pl); err != nil {
-			return err
-		} else if i < m {
+		if m := t.p.Size(pl); i < m {
 			pl, p2, err = t.p.PutInt64(pl, i, rk, int64(r))
 		} else {
 			pr, p2, err = t.p.PutInt64(pr, i-m, rk, int64(r))
@@ -168,9 +145,7 @@ func (t *Tree) out() (err error) {
 }
 
 func (t *Tree) Put(k, v []byte) (err error) {
-	if err = t.find(k); err != nil {
-		return err
-	}
+	t.find(k)
 
 	last := t.s[len(t.s)-1]
 	off := last.Off(t.mask)
@@ -191,9 +166,7 @@ func (t *Tree) Put(k, v []byte) (err error) {
 }
 
 func (t *Tree) Del(k []byte) (err error) {
-	if err = t.find(k); err != nil {
-		return err
-	}
+	t.find(k)
 
 	if !t.eq {
 		return nil
@@ -211,10 +184,8 @@ func (t *Tree) Del(k []byte) (err error) {
 	return t.out()
 }
 
-func (t *Tree) Get(k []byte) (v []byte, err error) {
-	if err = t.find(k); err != nil {
-		return nil, err
-	}
+func (t *Tree) Get(k []byte) (v []byte) {
+	t.find(k)
 
 	last := t.s[len(t.s)-1]
 	off := last.Off(t.mask)
@@ -223,28 +194,12 @@ func (t *Tree) Get(k []byte) (v []byte, err error) {
 	return t.p.Value(off, i)
 }
 
-func (t *Tree) search(off int64, k []byte) (int, bool, error) {
-	ln, err := t.p.Size(off)
-	if err != nil {
-		return 0, false, err
-	}
+func (t *Tree) search(off int64, k []byte) (int, bool) {
+	ln := t.p.Size(off)
 	i := sort.Search(ln, func(i int) bool {
-		var c int
-		c, err = t.p.KeyCmp(off, i, k)
-		return c <= 0
+		return t.p.KeyCmp(off, i, k) <= 0
 	})
-	if err != nil {
-		return 0, false, err
-	}
-	var eq bool
-	if i < ln {
-		if c, err := t.p.KeyCmp(off, i, k); err != nil {
-			return 0, false, err
-		} else {
-			eq = c == 0
-		}
-	}
-	return i, eq, nil
+	return i, i < ln && t.p.KeyCmp(off, i, k) == 0
 }
 
 func (l keylink) Off(mask int64) int64 {
