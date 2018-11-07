@@ -1,6 +1,6 @@
 package xrain
 
-const Mb = 1024 * 1024 * 1024
+const Mb = 1 << 30
 
 type (
 	Back interface {
