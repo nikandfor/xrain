@@ -1,0 +1,8 @@
+Aims
+
+* high speed/throughput
+* high optimization
+* full acid
+* transparent encryption
+* transparent compression
+* multi file db (hot/cold files) - LRU
