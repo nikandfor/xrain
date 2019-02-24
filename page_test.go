@@ -36,7 +36,7 @@ func (l LogLayout) Key(off int64, i int) []byte {
 
 func (l LogLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err error) {
 	loff, roff, err = l.PageLayout.Put(off, i, k, v)
-	l.Logger.Printf("LayOut %4x Put %v %q %q -> %x %x %v", off, i, k, v, loff, roff, err)
+	l.Logger.Printf("LayOut %4x Put i %v %q %q -> %x %x %v", off, i, k, v, loff, roff, err)
 	return
 }
 

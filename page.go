@@ -87,7 +87,6 @@ func (l *BaseLayout) Write(off int64, p []byte) (_ int64, _ []byte, err error) {
 		p = l.b.Load(off, l.page)
 	}
 	if l.getver(p) == l.ver {
-		log.Printf("Write in %x", off)
 		return off, p, nil
 	}
 	if l.exht {
@@ -167,6 +166,14 @@ func (l *KVLayout) KeyCmp(off int64, i int, k []byte) int {
 	return bytes.Compare(p[st:st+kl], k)
 }
 
+func (l *KVLayout) Key(off int64, i int) []byte {
+	p := l.b.Load(off, l.page)
+	st := l.dataoff(p, i)
+	kl := int(p[st])
+	st++
+	return p[st : st+kl]
+}
+
 func (l *KVLayout) LastKey(off int64) []byte {
 	p := l.b.Load(off, l.page)
 	n := l.nkeys(p)
@@ -206,6 +213,7 @@ func (l *KVLayout) Del(off int64, i int) (int64, error) {
 		off := l.dataoff(p, j+1)
 		l.setoff(p, j, off)
 	}
+	l.setSize(p, n-1)
 	return off, nil
 }
 
@@ -215,6 +223,7 @@ func (l *KVLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err err
 	b := l.dataoff(p, n-1)
 	sp := b - (16 + n*2)
 	size := 2 + 1 + len(k) + len(v)
+	log.Printf("space %x - %x (%x), size %x  (%x i %d set %q -> %q)", 16+n*2, b, sp, size, off, i, k, v)
 	if sp < size {
 		loff, roff, lp, rp, err := l.split(off, p)
 		if err != nil {
@@ -245,13 +254,14 @@ func (l *KVLayout) PutInt64(off int64, i int, k []byte, v int64) (loff, roff int
 
 func (l *KVLayout) putPage(p []byte, i int, k, v []byte) {
 	n := l.nkeys(p)
-	b := l.dataoff(p, n-1)
 	size := 1 + len(k) + len(v)
-	end := l.dataoff(p, i)
+	b := l.dataoff(p, n-1)
+	end := l.dataoff(p, i-1)
+	//	log.Printf("putPage i %d/%d b %02x size %02x end %02x (%q -> %q)", i, n, b, size, end, k, v)
 	copy(p[b-size:], p[b:end])
 	for j := n; j > i; j-- {
 		off := l.dataoff(p, j-1)
-		l.setoff(p, j, off)
+		l.setoff(p, j, off-size)
 	}
 
 	st := end - size
@@ -261,6 +271,8 @@ func (l *KVLayout) putPage(p []byte, i int, k, v []byte) {
 	st++
 	st += copy(p[st:], k)
 	copy(p[st:], v)
+
+	l.setSize(p, n+1)
 }
 
 func (l *KVLayout) split(off int64, p []byte) (loff, roff int64, lp, rp []byte, err error) {
@@ -280,19 +292,23 @@ func (l *KVLayout) split(off int64, p []byte) (loff, roff int64, lp, rp []byte, 
 
 	lp[0] = p[0]
 	rp[0] = p[0]
-	l.setSize(lp, n-m)
-	l.setSize(rp, m)
+	l.setSize(lp, m)
+	l.setSize(rp, n-m)
+
+	//	log.Printf("split %x -> %x %x\n%v\n%v", off, loff, roff, hex.Dump(lp), hex.Dump(rp))
 
 	return
 }
 
 func (l *KVLayout) move(rp, p []byte, ri, i, I int) {
-	st := l.dataoff(p, I)
+	st := l.dataoff(p, I-1)
 	end := l.dataoff(p, i-1)
-	rst := l.dataoff(rp, ri)
-	copy(rp[rst:], p[st:end])
+	rend := l.dataoff(rp, ri-1)
+	size := end - st
+	log.Printf("move %d keys of size %x from %x - %x to %x", I-i, size, st, end, rend-size)
+	copy(rp[rend-size:], p[st:end])
 
-	diff := rst - st
+	diff := rend - end
 	for j := 0; j < I-i; j++ {
 		off := l.dataoff(p, i+j)
 		l.setoff(rp, ri+j, off+diff)

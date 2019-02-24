@@ -1,6 +1,7 @@
 package xrain
 
 import (
+	"encoding/hex"
 	"log"
 	"sort"
 )
@@ -122,7 +123,7 @@ func (t *Tree) seek(st []keylink, k []byte) (_ []keylink, eq bool) {
 		st = append(st, keylink(off))
 
 		i, eq = t.search(off, k)
-		log.Printf("search %q -> %x %v", k, i, eq)
+		//	log.Printf("search %2x %q -> %x %v", off, k, i, eq)
 
 		if t.p.IsLeaf(off) {
 			st[d] |= keylink(i)
@@ -138,7 +139,7 @@ func (t *Tree) seek(st []keylink, k []byte) (_ []keylink, eq bool) {
 
 		off = t.p.Int64(off, i)
 	}
-	log.Printf("seek   %q -> %x %v", k, st, eq)
+	//	log.Printf("seek      %q -> %x %v", k, st, eq)
 	return st, eq
 }
 
@@ -159,37 +160,38 @@ func (t *Tree) step(st []keylink, k []byte, back bool) (_ []keylink) {
 			off = last.Off(mask)
 			i = last.Index(mask)
 			if back {
-				i++
-				if i == t.p.NKeys(off) {
-					continue
-				}
-				st[d]++
-			} else {
 				if i == 0 {
 					continue
 				}
 				i--
-				st[d]--
+			} else {
+				i++
+				if i == t.p.NKeys(off) {
+					continue
+				}
 			}
 
 			up = false
+			st[d] = keylink(off) | keylink(i)
 			st = st[:d+1]
 		} else {
 			st = append(st, keylink(off))
 			n := t.p.NKeys(off)
 
 			if back && k == nil {
-				i, eq = 0, false
+				i, eq = n, false
 			} else {
 				i, eq = t.search(off, k)
 			}
-			log.Printf("search %4x %q -> %d/%d %v", off, k, i, n, eq)
+			//	log.Printf("search %4x %q -> %d/%d %v", off, k, i, n, eq)
 
 			if t.p.IsLeaf(off) {
-				if !back {
+				if back {
 					i--
-				} else if eq {
-					i++
+				} else {
+					if eq {
+						i++
+					}
 				}
 				if i < 0 || i >= n {
 					up = true
@@ -209,15 +211,15 @@ func (t *Tree) step(st []keylink, k []byte, back bool) (_ []keylink) {
 		d++
 		off = t.p.Int64(off, i)
 	}
-	log.Printf("step   %q -> %x", k, st)
+	//	log.Printf("step   %q -> %x", k, st)
 	return st
 }
 
 func (t *Tree) out(s []keylink, l, r int64) (err error) {
 	mask := t.mask
 	d := len(s)
-	//	log.Printf("out d  %v", d)
 	for d -= 2; d >= 0; d-- {
+		log.Printf("out d  %v %x  lr %x %x", d+2, s, l, r)
 		par := s[d]
 		off := par.Off(mask)
 		i := par.Index(mask)
@@ -225,7 +227,14 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 
 		if r == NilPage && l == choff {
 			// we only've updated one leaf page
+			log.Printf("root sm %4x", t.root)
 			return nil
+		}
+
+		if false {
+			b := t.p.(LogLayout).PageLayout.(*KVLayout).BaseLayout.b
+			b.Sync()
+			log.Printf("stage1 ch %x %x par %x %v\n%v", l, r, off, i, hex.Dump(b.Load(0, b.Size())))
 		}
 
 		// delete old link
@@ -235,7 +244,7 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 		}
 
 		// rebalance if needed
-		if r == NilPage {
+		if false && r == NilPage {
 			if t.p.NeedRebalance(l) {
 				i, l, r = t.p.Siblings(off, i)
 				l, r, err = t.p.Rebalance(l, r)
@@ -243,6 +252,7 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 					return err
 				}
 			} else {
+				// page does not require changes
 				continue
 			}
 		}
@@ -252,6 +262,12 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 		pl, pr, err := t.p.PutInt64(off, i, lk, l)
 		if err != nil {
 			return err
+		}
+
+		if false {
+			b := t.p.(LogLayout).PageLayout.(*KVLayout).BaseLayout.b
+			b.Sync()
+			log.Printf("stage2 ch %x %x par %x %x %v\n%v", l, r, pl, pr, i, hex.Dump(b.Load(0, b.Size())))
 		}
 
 		// don't have right new child
@@ -267,7 +283,11 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 			if err != nil {
 				return err
 			}
+			l, r = pl, pr
+			continue
 		}
+
+		log.Printf("pl pr %x %x   lk %q rk %q", pl, pr, lk, rk)
 
 		i++
 		var p2 int64
@@ -281,6 +301,9 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 			return err
 		}
 		if p2 != NilPage {
+			b := t.p.(LogLayout).PageLayout.(*KVLayout).BaseLayout.b
+			b.Sync()
+			log.Printf("now have par %x %x and child %x %x and p2 %x\n%v", pl, pr, l, r, p2, hex.Dump(b.Load(0, b.Size())))
 			panic("double split")
 		}
 
@@ -317,7 +340,7 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 func (t *Tree) search(off int64, k []byte) (int, bool) {
 	ln := t.p.NKeys(off)
 	i := sort.Search(ln, func(i int) bool {
-		return t.p.KeyCmp(off, i, k) <= 0
+		return t.p.KeyCmp(off, i, k) >= 0
 	})
 	return i, i < ln && t.p.KeyCmp(off, i, k) == 0
 }

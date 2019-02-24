@@ -1,8 +1,10 @@
 package xrain
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -12,7 +14,15 @@ import (
 
 func newIntTree(n int, psize int64) (*Tree, Back) {
 	b := NewMemBack(int64(n) * psize)
-	pl := &IntLayout{BaseLayout: NewPageLayout(b, psize, 1, 0, nil)}
+	pl := &IntLayout{BaseLayout: NewPageLayout(b, psize, 0, 0, nil)}
+	tr := NewTree(pl, 0)
+	tr.p = LogLayout{PageLayout: tr.p, Logger: log.New(os.Stderr, "", log.LstdFlags)}
+	return tr, b
+}
+
+func newKVTree(n int, psize int64) (*Tree, Back) {
+	b := NewMemBack(int64(n) * psize)
+	pl := &KVLayout{BaseLayout: NewPageLayout(b, psize, 0, 0, nil)}
 	tr := NewTree(pl, 0)
 	tr.p = LogLayout{PageLayout: tr.p, Logger: log.New(os.Stderr, "", log.LstdFlags)}
 	return tr, b
@@ -24,6 +34,33 @@ func TestIntPut2Get(t *testing.T) {
 	tr, b := newIntTree(1, Page)
 
 	err := tr.Put(tb(1), []byte("    key1"))
+	assert.NoError(t, err)
+
+	err = tr.Put(tb(2), []byte("    key2"))
+	assert.NoError(t, err)
+
+	err = b.Sync()
+	assert.NoError(t, err)
+
+	p := b.Load(0, b.Size())
+	log.Printf("dump %p\n%v", &p[0], hex.Dump(p))
+
+	v := tr.Get(tb(1))
+	assert.Equal(t, []byte("    key1"), v)
+
+	v = tr.Get(tb(2))
+	assert.Equal(t, []byte("    key2"), v)
+}
+
+func TestIntPut2DblGet(t *testing.T) {
+	const Page = 0x40
+
+	tr, b := newIntTree(1, Page)
+
+	err := tr.Put(tb(1), []byte("    key1"))
+	assert.NoError(t, err)
+
+	err = tr.Put(tb(2), []byte("    key2"))
 	assert.NoError(t, err)
 
 	err = tr.Put(tb(2), []byte("    key2"))
@@ -189,8 +226,117 @@ func TestIntPut4Prev(t *testing.T) {
 	assert.Equal(t, []byte(nil), k)
 }
 
+func TestKVPutManyGet(t *testing.T) {
+	const Page = 0x40
+	const N = 8
+	var err error
+
+	tr, b := newKVTree(1, Page)
+
+	mod := int64(11)
+	k := mod % N
+	for i := 0; i < N; i++ {
+		err = tr.Put(tb7(k), []byte(fmt.Sprintf("val_%2d", k)))
+		assert.NoError(t, err)
+
+		/*
+			err = b.Sync()
+			assert.NoError(t, err)
+
+			p := b.Load(0, b.Size())
+			log.Printf("dump (put %v)\n%v", k, hex.Dump(p))
+		*/
+
+		k = (k + mod) % N
+	}
+
+	err = b.Sync()
+	assert.NoError(t, err)
+
+	p := b.Load(0, b.Size())
+	log.Printf("dump all %d keys added, %d pages, root %x\n%v", N, b.Size()/Page, tr.root, hex.Dump(p))
+
+	//	return
+
+	mod = 13
+	k = mod % N
+	for i := 0; i < N; i++ {
+		v := tr.Get(tb7(k))
+		e := []byte(fmt.Sprintf("val_%2d", k))
+		assert.Equal(t, e, v, "key: %d", k)
+		k = (k + mod) % N
+	}
+}
+
+func TestKVPutManyNext(t *testing.T) {
+	const Page = 0x40
+	const N = 10
+	var err error
+
+	tr, b := newKVTree(1, Page)
+
+	mod := int64(7)
+	k := mod % N
+	for i := 0; i < N; i++ {
+		err = tr.Put(tb7(k), []byte(fmt.Sprintf("val_%2d", k)))
+		assert.NoError(t, err)
+		k = (k + mod) % N
+	}
+
+	err = b.Sync()
+	assert.NoError(t, err)
+
+	p := b.Load(0, b.Size())
+	log.Printf("dump\n%v", hex.Dump(p))
+
+	bk := []byte(nil)
+	for i := 0; i < N; i++ {
+		nk := tr.Next(bk)
+		assert.True(t, bytes.Compare(bk, nk) < 0, "%q !< %q (%v %v)", bk, nk, bk == nil, nk == nil)
+		bk = nk
+	}
+
+	nk := tr.Next(bk)
+	assert.Nil(t, nk)
+}
+
+func TestKVPutManyPrev(t *testing.T) {
+	const Page = 0x40
+	const N = 10
+	var err error
+
+	tr, b := newKVTree(1, Page)
+
+	mod := int64(7)
+	k := mod % N
+	for i := 0; i < N; i++ {
+		err = tr.Put(tb7(k), []byte(fmt.Sprintf("val_%2d", k)))
+		assert.NoError(t, err)
+		k = (k + mod) % N
+	}
+
+	err = b.Sync()
+	assert.NoError(t, err)
+
+	p := b.Load(0, b.Size())
+	log.Printf("dump\n%v", hex.Dump(p))
+
+	bk := tr.Prev(nil)
+	for i := 0; i < N; i++ {
+		nk := tr.Prev(bk)
+		assert.True(t, bytes.Compare(nk, bk) < 0, "%q !< %q (%v %v)", nk, bk, nk == nil, bk == nil)
+		bk = nk
+	}
+}
+
 func tb(v int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(v))
 	return b
+}
+
+func tb7(v int64) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(v))
+	return b[1:]
 }
