@@ -236,16 +236,17 @@ func TestKVPutManyGet(t *testing.T) {
 	mod := int64(11)
 	k := mod % N
 	for i := 0; i < N; i++ {
+		//	log.Printf("==== === Put k %v", k)
 		err = tr.Put(tb7(k), []byte(fmt.Sprintf("val_%2d", k)))
 		assert.NoError(t, err)
 
-		/*
+		if false {
 			err = b.Sync()
 			assert.NoError(t, err)
 
 			p := b.Load(0, b.Size())
-			log.Printf("dump (put %v)\n%v", k, hex.Dump(p))
-		*/
+			log.Printf("dump (put %v) root %4x pages %d\n%v", k, tr.root, len(p)/Page, hex.Dump(p))
+		}
 
 		k = (k + mod) % N
 	}
@@ -266,6 +267,62 @@ func TestKVPutManyGet(t *testing.T) {
 		assert.Equal(t, e, v, "key: %d", k)
 		k = (k + mod) % N
 	}
+}
+
+func TestKVPutManyGetDel(t *testing.T) {
+	const Page = 0x80
+	const N = 10
+	var err error
+
+	tr, b := newKVTree(1, Page)
+
+	mod := int64(11)
+	k := mod % N
+	for i := 0; i < N; i++ {
+		err = tr.Put(tb7(k), []byte(fmt.Sprintf("val_%2d", k)))
+		assert.NoError(t, err)
+
+		if false {
+			err = b.Sync()
+			assert.NoError(t, err)
+
+			p := b.Load(0, b.Size())
+			log.Printf("dump (put %v) root %4x pages %d\n%v", k, tr.root, len(p)/Page, hex.Dump(p))
+		}
+
+		k = (k + mod) % N
+	}
+
+	log.Printf("dump all %d keys added, %d pages, root %x\n%v", N, b.Size()/Page, tr.root, dumpFile(tr.p))
+
+	//	return
+
+	mod = 13
+	k = mod % N
+	for i := 0; i < N; i++ {
+		v := tr.Get(tb7(k))
+		e := []byte(fmt.Sprintf("val_%2d", k))
+		assert.Equal(t, e, v, "key: %d", k)
+		k = (k + mod) % N
+	}
+
+	mod = 17
+	k = mod % N
+	for i := 0; i < N; i++ {
+		log.Printf("==== === Del %d", k)
+		tr.Del(tb7(k))
+
+		if true {
+			log.Printf("dump (del %v) root %4x pages %d\n%v", k, tr.root, b.Size()/Page, dumpFile(tr.p))
+		}
+
+		k = (k + mod) % N
+	}
+
+	first := tr.Next(nil)
+	assert.Nil(t, first)
+
+	log.Printf("dump all %d keys deleted, %d pages, root %x\n%v", N, b.Size()/Page, tr.root, dumpFile(tr.p))
 }
 
 func TestKVPutManyNext(t *testing.T) {
@@ -327,6 +384,35 @@ func TestKVPutManyPrev(t *testing.T) {
 		assert.True(t, bytes.Compare(nk, bk) < 0, "%q !< %q (%v %v)", nk, bk, nk == nil, bk == nil)
 		bk = nk
 	}
+}
+
+func TestKVOutParentSplit(t *testing.T) {
+	const Page = 0x80
+	const N = 10
+	var err error
+
+	tr, b := newKVTree(1, Page)
+	_ = b
+
+	valbuf := make([]byte, 0x10-1)
+
+	for i := 0; i < 14; i++ {
+		key := fmt.Sprintf("k%3dc", i)
+		if i == 11 {
+			key = fmt.Sprintf("k%3dc__________________", i)
+		}
+		copy(valbuf, fmt.Sprintf("val_% 4d", i))
+		err = tr.Put([]byte(key), valbuf)
+		assert.NoError(t, err)
+	}
+
+	log.Printf("before root %x\n%v", tr.root, dumpFile(tr.p))
+
+	copy(valbuf, fmt.Sprintf("newnewnew"))
+	err = tr.Put([]byte(fmt.Sprintf("k%3dq", 17)), valbuf)
+	assert.NoError(t, err)
+
+	log.Printf("after root %x\n%v", tr.root, dumpFile(tr.p))
 }
 
 func tb(v int64) []byte {

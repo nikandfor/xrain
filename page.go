@@ -3,7 +3,9 @@ package xrain
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"log"
+	"strings"
 )
 
 const NilPage = -1
@@ -12,6 +14,7 @@ type (
 	PageLayout interface {
 		PageSize() int64
 		AllocRoot() (int64, error)
+		Reclaim(p int64) error
 
 		NKeys(p int64) int
 		IsLeaf(p int64) bool
@@ -138,9 +141,24 @@ func (l *BaseLayout) nkeys(p []byte) int {
 	return int(p[0])&0x7f<<8 | int(p[1])
 }
 
-func (l *BaseLayout) setSize(p []byte, n int) {
+func (l *BaseLayout) setsize(p []byte, n int) {
 	p[0] = p[0]&0x80 | byte(n>>8&0x7f)
 	p[1] = byte(n)
+}
+
+func (l *BaseLayout) Reclaim(off int64) error {
+	// TODO
+	p := l.b.Load(off, l.page)
+	copy(p[32:], "RECLAIMED")
+	return nil
+}
+
+func (l *KVLayout) datasize(p []byte) int {
+	n := l.nkeys(p)
+	if n == 0 {
+		return 0
+	}
+	return n*2 + (l.dataoff(p, -1) - l.dataoff(p, n-1))
 }
 
 func (l *KVLayout) dataoff(p []byte, i int) int {
@@ -177,6 +195,9 @@ func (l *KVLayout) Key(off int64, i int) []byte {
 func (l *KVLayout) LastKey(off int64) []byte {
 	p := l.b.Load(off, l.page)
 	n := l.nkeys(p)
+	if n == 0 {
+		panic(off)
+	}
 	st := l.dataoff(p, n-1)
 	kl := int(p[st])
 	st++
@@ -211,9 +232,9 @@ func (l *KVLayout) Del(off int64, i int) (int64, error) {
 	copy(p[b+size:], p[b:st])
 	for j := i; j < n-1; j++ {
 		off := l.dataoff(p, j+1)
-		l.setoff(p, j, off)
+		l.setoff(p, j, off+size)
 	}
-	l.setSize(p, n-1)
+	l.setsize(p, n-1)
 	return off, nil
 }
 
@@ -223,14 +244,14 @@ func (l *KVLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err err
 	b := l.dataoff(p, n-1)
 	sp := b - (16 + n*2)
 	size := 2 + 1 + len(k) + len(v)
-	log.Printf("space %x - %x (%x), size %x  (%x i %d set %q -> %q)", 16+n*2, b, sp, size, off, i, k, v)
+	log.Printf("Put %3x space %x - %x (%x), size %x  (%x i %d set %q -> %q)", off, 16+n*2, b, sp, size, off, i, k, v)
 	if sp < size {
 		loff, roff, lp, rp, err := l.split(off, p)
 		if err != nil {
 			return 0, 0, err
 		}
-		n = int(lp[0])&^0x80<<8 | int(lp[1])
-		if i <= n {
+		n = l.nkeys(lp)
+		if i < n {
 			l.putPage(lp, i, k, v)
 		} else {
 			l.putPage(rp, i-n, k, v)
@@ -272,12 +293,12 @@ func (l *KVLayout) putPage(p []byte, i int, k, v []byte) {
 	st += copy(p[st:], k)
 	copy(p[st:], v)
 
-	l.setSize(p, n+1)
+	l.setsize(p, n+1)
 }
 
 func (l *KVLayout) split(off int64, p []byte) (loff, roff int64, lp, rp []byte, err error) {
 	n := l.nkeys(p)
-	m := n / 2
+	m := (n + 1) / 2
 
 	loff, lp, err = l.Write(off, p)
 	if err != nil {
@@ -292,15 +313,19 @@ func (l *KVLayout) split(off int64, p []byte) (loff, roff int64, lp, rp []byte, 
 
 	lp[0] = p[0]
 	rp[0] = p[0]
-	l.setSize(lp, m)
-	l.setSize(rp, n-m)
+	l.setsize(lp, m)
+	l.setsize(rp, n-m)
 
+	log.Printf("split %x -> %x %x  n %d %d", off, loff, roff, l.nkeys(lp), l.nkeys(rp))
 	//	log.Printf("split %x -> %x %x\n%v\n%v", off, loff, roff, hex.Dump(lp), hex.Dump(rp))
 
 	return
 }
 
 func (l *KVLayout) move(rp, p []byte, ri, i, I int) {
+	if i == I {
+		return
+	}
 	st := l.dataoff(p, I-1)
 	end := l.dataoff(p, i-1)
 	rend := l.dataoff(rp, ri-1)
@@ -320,7 +345,7 @@ func (l *KVLayout) NeedRebalance(off int64) bool {
 	n := l.nkeys(p)
 	b := l.dataoff(p, n-1)
 	sp := b - (16 + n*2)
-	return sp < len(p)/2
+	return sp > len(p)/2
 }
 
 func (l *KVLayout) Siblings(off int64, i int) (li int, loff, roff int64) {
@@ -349,37 +374,57 @@ func (l *KVLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) {
 	if err != nil {
 		return
 	}
-	rp[0] = lp[0]
 
 	ln := l.nkeys(lp)
-	lb := l.dataoff(lp, ln-1)
+	lsz := l.datasize(lp)
 	rn := l.nkeys(rp)
-	rb := l.dataoff(rp, rn-1)
+	rsz := l.datasize(rp)
 
-	if lb < rb { // left have less space
-		i := 1
+	log.Printf("rebalace size %x %x n %d %d", lsz, rsz, ln, rn)
+
+	if 16+lsz+rsz <= int(l.page) {
+		l.move(lp, rp, ln, 0, rn)
+		l.setsize(lp, ln+rn)
+		l.setsize(rp, 0)
+		err = l.Reclaim(roff)
+		if err != nil {
+			return
+		}
+		return loff, NilPage, nil
+	}
+
+	if lsz > rsz {
+		diff := lsz - rsz
+		b := l.dataoff(lp, ln-1)
+		i := 0
 		for {
-			diff := l.dataoff(lp, ln-i) - lb
-			if lb-diff > rb+diff {
+			bnew := l.dataoff(lp, ln-1-i-1)
+			if b-bnew > diff {
 				break
 			}
 			i++
 		}
-		l.move(rp, lp, rn, ln-i, ln)
-		l.setSize(lp, ln-i)
-		l.setSize(rp, rn+i)
+		if i != 0 {
+			l.move(rp, lp, rn, ln-i, ln)
+			l.setsize(lp, ln-i)
+			l.setsize(rp, rn+i)
+		}
 	} else {
-		i := 1
+		diff := rsz - lsz
+		b := l.dataoff(rp, rn-1)
+		i := 0
 		for {
-			diff := l.dataoff(rp, rn-i) - rb
-			if lb-diff < rb+diff {
+			bnew := l.dataoff(rp, rn-1-i-1)
+			if b-bnew > diff {
 				break
 			}
 			i++
 		}
-		l.move(lp, rp, ln, rn-i, rn)
-		l.setSize(lp, ln+i)
-		l.setSize(rp, rn-i)
+		if i != 0 {
+			l.move(lp, rp, ln, rn-i, rn)
+			l.setsize(lp, ln+i)
+			l.setsize(rp, rn-i)
+		}
 	}
 
 	return
@@ -430,7 +475,7 @@ func (l *IntLayout) Del(off int64, i int) (int64, error) {
 	st := 16 + i*16
 	end := 16 + n*16
 	copy(p[st:], p[st+16:end])
-	l.setSize(p, n-1)
+	l.setsize(p, n-1)
 	return off, nil
 }
 
@@ -472,8 +517,8 @@ func (l *IntLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err er
 
 	lp[0] = p[0]
 	rp[0] = p[0]
-	l.setSize(lp, m)
-	l.setSize(rp, n-m)
+	l.setsize(lp, m)
+	l.setsize(rp, n-m)
 
 	// add
 	if i < m {
@@ -490,7 +535,7 @@ func (l *IntLayout) putPage(p []byte, i, n int, k, v []byte) {
 	copy(p[st+16:], p[st:end])
 	copy(p[st:], k)
 	copy(p[st+8:], v)
-	l.setSize(p, n+1)
+	l.setsize(p, n+1)
 }
 
 func (l *IntLayout) PutInt64(off int64, i int, k []byte, v int64) (loff, roff int64, err error) {
@@ -547,13 +592,89 @@ func (l *IntLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) 
 
 	if ln > rn {
 		copy(rp[rend:], lp[end:lend])
-		l.setSize(lp, n)
-		l.setSize(rp, sum-n)
+		l.setsize(lp, n)
+		l.setsize(rp, sum-n)
 	} else {
 		copy(lp[lend:], rp[end:rend])
-		l.setSize(rp, n)
-		l.setSize(lp, sum-n)
+		l.setsize(rp, n)
+		l.setsize(lp, sum-n)
 	}
 
 	return
+}
+
+func dumpPage(l PageLayout, off int64) string {
+	var b Back
+	var kvl *KVLayout
+	var intl *IntLayout
+	switch l := l.(type) {
+	case LogLayout:
+		return dumpPage(l.PageLayout, off)
+	case *KVLayout:
+		b = l.b
+		kvl = l
+	case *IntLayout:
+		b = l.b
+		intl = l
+	default:
+		panic(fmt.Sprintf("layout type %T", l))
+	}
+
+	p := b.Load(off, l.PageSize())
+	var buf bytes.Buffer
+	tp := 'B'
+	if l.IsLeaf(off) {
+		tp = 'D'
+	}
+	n := l.NKeys(off)
+	fmt.Fprintf(&buf, "%4x: %c nkeys %4d", off, tp, n)
+	if kvl != nil {
+		fmt.Fprintf(&buf, "datasize %3x free space %3x\n", kvl.datasize(p), len(p)-kvl.datasize(p)-16)
+	} else {
+		fmt.Fprintf(&buf, "datasize %3x free space %3x\n", n*16, len(p)-n*16-16)
+	}
+	if intl != nil {
+		for i := 0; i < n; i++ {
+			k := l.Key(off, i)
+			v := l.Int64(off, i)
+			fmt.Fprintf(&buf, "    %2x -> %4x\n", k, v)
+		}
+	} else {
+		if l.IsLeaf(off) {
+			for i := 0; i < n; i++ {
+				k := l.Key(off, i)
+				v := l.Value(off, i)
+				fmt.Fprintf(&buf, "    %q -> %q\n", k, v)
+			}
+		} else {
+			for i := 0; i < n; i++ {
+				k := l.Key(off, i)
+				v := l.Int64(off, i)
+				fmt.Fprintf(&buf, "    %4x <- % 2x (%q)\n", v, k, k)
+			}
+		}
+	}
+	return buf.String()
+}
+
+func dumpFile(l PageLayout) string {
+	var b Back
+	switch l := l.(type) {
+	case LogLayout:
+		return dumpFile(l.PageLayout)
+	case *KVLayout:
+		b = l.b
+	case *IntLayout:
+		b = l.b
+	default:
+		panic(fmt.Sprintf("layout type %T", l))
+	}
+
+	var buf strings.Builder
+	b.Sync()
+	sz := b.Size()
+	for off := int64(0); off < sz; off += l.PageSize() {
+		buf.WriteString(dumpPage(l, off))
+	}
+	return buf.String()
 }

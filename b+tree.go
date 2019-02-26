@@ -1,7 +1,6 @@
 package xrain
 
 import (
-	"encoding/hex"
 	"log"
 	"sort"
 )
@@ -220,21 +219,27 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 	d := len(s)
 	for d -= 2; d >= 0; d-- {
 		log.Printf("out d  %v %x  lr %x %x", d+2, s, l, r)
-		par := s[d]
+		par := s[d] // parent page
 		off := par.Off(mask)
 		i := par.Index(mask)
-		choff := s[d+1].Off(mask)
-
-		if r == NilPage && l == choff {
-			// we only've updated one leaf page
-			log.Printf("root sm %4x", t.root)
-			return nil
+		var rdel bool
+		if false {
+			log.Printf("stage0 d %d off %3x i %d lr %3x %3x\n%v", d, off, i, l, r, dumpFile(t.p))
 		}
 
-		if false {
-			b := t.p.(LogLayout).PageLayout.(*KVLayout).BaseLayout.b
-			b.Sync()
-			log.Printf("stage1 ch %x %x par %x %v\n%v", l, r, off, i, hex.Dump(b.Load(0, b.Size())))
+		// rebalance if needed
+		if r == NilPage && t.p.NeedRebalance(l) {
+			i, l, r = t.p.Siblings(off, i)
+			if r != NilPage {
+				l, r, err = t.p.Rebalance(l, r)
+				if err != nil {
+					return err
+				}
+				log.Printf("rebalanced %x r %x n %d", l, r, t.p.NKeys(l))
+				if r == NilPage {
+					rdel = true
+				}
+			}
 		}
 
 		// delete old link
@@ -243,17 +248,10 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 			return err
 		}
 
-		// rebalance if needed
-		if false && r == NilPage {
-			if t.p.NeedRebalance(l) {
-				i, l, r = t.p.Siblings(off, i)
-				l, r, err = t.p.Rebalance(l, r)
-				if err != nil {
-					return err
-				}
-			} else {
-				// page does not require changes
-				continue
+		if rdel {
+			off, err = t.p.Del(off, i)
+			if err != nil {
+				return err
 			}
 		}
 
@@ -264,17 +262,13 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 			return err
 		}
 
-		if false {
-			b := t.p.(LogLayout).PageLayout.(*KVLayout).BaseLayout.b
-			b.Sync()
-			log.Printf("stage2 ch %x %x par %x %x %v\n%v", l, r, pl, pr, i, hex.Dump(b.Load(0, b.Size())))
-		}
-
 		// don't have right new child
 		if r == NilPage {
 			l, r = pl, pr
 			continue
 		}
+
+		log.Printf("stage1 d %d par %3x %3x i %d lr %3x %3x", d, pl, pr, i, l, r)
 
 		rk := t.p.LastKey(r)
 		// we didn't split parent page yet
@@ -301,13 +295,18 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 			return err
 		}
 		if p2 != NilPage {
-			b := t.p.(LogLayout).PageLayout.(*KVLayout).BaseLayout.b
-			b.Sync()
-			log.Printf("now have par %x %x and child %x %x and p2 %x\n%v", pl, pr, l, r, p2, hex.Dump(b.Load(0, b.Size())))
 			panic("double split")
 		}
 
 		l, r = pl, pr
+	}
+
+	for r == NilPage && !t.p.IsLeaf(l) && t.p.NKeys(l) == 1 {
+		err = t.p.Reclaim(l)
+		if err != nil {
+			return err
+		}
+		l = t.p.Int64(l, 0)
 	}
 
 	if r != NilPage {
@@ -329,6 +328,7 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 		}
 
 		l = off
+		r = NilPage
 	}
 
 	t.root = l

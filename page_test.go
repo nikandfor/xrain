@@ -18,7 +18,7 @@ func (l LogLayout) NKeys(off int64) int {
 
 func (l LogLayout) IsLeaf(off int64) bool {
 	r := l.PageLayout.IsLeaf(off)
-	l.Logger.Printf("LayOut %4x IsLeaf %v", off, r)
+	//	l.Logger.Printf("LayOut %4x IsLeaf %v", off, r)
 	return r
 }
 
