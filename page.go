@@ -245,19 +245,8 @@ func (l *KVLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err err
 	sp := b - (16 + n*2)
 	size := 2 + 1 + len(k) + len(v)
 	log.Printf("Put %3x space %x - %x (%x), size %x  (%x i %d set %q -> %q)", off, 16+n*2, b, sp, size, off, i, k, v)
-	if sp < size {
-		loff, roff, lp, rp, err := l.split(off, p)
-		if err != nil {
-			return 0, 0, err
-		}
-		n = l.nkeys(lp)
-		if i < n {
-			l.putPage(lp, i, k, v)
-		} else {
-			l.putPage(rp, i-n, k, v)
-		}
-		return loff, roff, nil
-	} else {
+
+	if size <= sp {
 		off, p, err = l.Write(off, p)
 		if err != nil {
 			return 0, 0, err
@@ -265,6 +254,18 @@ func (l *KVLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err err
 		l.putPage(p, i, k, v)
 		return off, NilPage, nil
 	}
+
+	loff, roff, lp, rp, err := l.split(off, p)
+	if err != nil {
+		return 0, 0, err
+	}
+	n = l.nkeys(lp)
+	if i < n {
+		l.putPage(lp, i, k, v)
+	} else {
+		l.putPage(rp, i-n, k, v)
+	}
+	return loff, roff, nil
 }
 
 func (l *KVLayout) PutInt64(off int64, i int, k []byte, v int64) (loff, roff int64, err error) {
