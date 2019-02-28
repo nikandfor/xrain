@@ -14,7 +14,8 @@ import (
 
 func newIntTree(n int, psize int64) (*Tree, Back) {
 	b := NewMemBack(int64(n) * psize)
-	pl := &IntLayout{BaseLayout: NewPageLayout(b, psize, 0, 0, nil)}
+	free := NewNoRewriteFreeList(psize, b)
+	pl := &IntLayout{BaseLayout: NewPageLayout(b, psize, 0, free)}
 	tr := NewTree(pl, 0)
 	tr.p = LogLayout{PageLayout: tr.p, Logger: log.New(os.Stderr, "", log.LstdFlags)}
 	return tr, b
@@ -22,10 +23,22 @@ func newIntTree(n int, psize int64) (*Tree, Back) {
 
 func newKVTree(n int, psize int64) (*Tree, Back) {
 	b := NewMemBack(int64(n) * psize)
-	pl := &KVLayout{BaseLayout: NewPageLayout(b, psize, 0, 0, nil)}
+	free := NewNoRewriteFreeList(psize, b)
+	pl := &KVLayout{BaseLayout: NewPageLayout(b, psize, 0, free)}
 	tr := NewTree(pl, 0)
 	tr.p = LogLayout{PageLayout: tr.p, Logger: log.New(os.Stderr, "", log.LstdFlags)}
 	return tr, b
+}
+
+func newKVTreeFL(psize int64, ver, keep int64) (*Tree, *FreeList, Back) {
+	b := NewMemBack(2 * psize)
+
+	free := NewFreeList(0, psize, psize, ver, keep, b)
+
+	pl := &KVLayout{BaseLayout: NewPageLayout(b, psize, ver, free)}
+	tr := NewTree(pl, psize)
+	tr.p = LogLayout{PageLayout: tr.p, Logger: log.New(os.Stderr, "kv: ", log.LstdFlags)}
+	return tr, free, b
 }
 
 func TestIntPut2Get(t *testing.T) {
@@ -413,6 +426,66 @@ func TestKVOutParentSplit(t *testing.T) {
 	assert.NoError(t, err)
 
 	log.Printf("after root %x\n%v", tr.root, dumpFile(tr.p))
+}
+
+func TestKVReclaimReuse(t *testing.T) {
+	const Page = 0x80
+	const N = 10
+	var err error
+
+	tr, free, b := newKVTreeFL(Page, 0, -1)
+	_ = tr
+	_ = err
+	_ = free
+	_ = b
+
+}
+
+func TestIntPutManyGetDel(t *testing.T) {
+	const Page = 0x40
+	const N = 4
+	var err error
+
+	tr, b := newIntTree(1, Page)
+
+	mod := int64(11)
+	k := mod % N
+	for i := 0; i < N; i++ {
+		err = tr.Put(tb(k), tb(k))
+		assert.NoError(t, err)
+
+		log.Printf("dump (put %v) root %4x pages %d\n%v", k, tr.root, b.Size()/Page, dumpFile(tr.p))
+
+		k = (k + mod) % N
+	}
+
+	log.Printf("dump all %d keys added, %d pages, root %x\n%v", N, b.Size()/Page, tr.root, dumpFile(tr.p))
+
+	//	return
+
+	mod = 13
+	k = mod % N
+	for i := 0; i < N; i++ {
+		v := tr.Get(tb(k))
+		assert.Equal(t, tb(k), v, "key: %d", k)
+		k = (k + mod) % N
+	}
+
+	mod = 17
+	k = mod % N
+	for i := 0; i < N; i++ {
+		log.Printf("==== === Del %d", k)
+		tr.Del(tb(k))
+
+		log.Printf("dump (del %v) root %4x pages %d\n%v", k, tr.root, b.Size()/Page, dumpFile(tr.p))
+
+		k = (k + mod) % N
+	}
+
+	first := tr.Next(nil)
+	assert.Nil(t, first)
+
+	log.Printf("dump all %d keys deleted, %d pages, root %x\n%v", N, b.Size()/Page, tr.root, dumpFile(tr.p))
 }
 
 func tb(v int64) []byte {
