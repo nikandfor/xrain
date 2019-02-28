@@ -8,7 +8,6 @@ type (
 	Back interface {
 		Load(off, len int64) []byte
 		Size() int64
-		Grow(size int64) error
 		Truncate(size int64) error
 		Sync() error
 	}
@@ -69,10 +68,6 @@ func (b *MemBack) Truncate(s int64) error {
 	lend := l.off + int64(len(l.d))
 	b.s = append(b.s, seg{off: lend, d: make([]byte, s-lend)})
 	return nil
-}
-
-func (b *MemBack) Grow(s int64) error {
-	return b.Truncate(s)
 }
 
 func (b *MemBack) Size() int64 {
