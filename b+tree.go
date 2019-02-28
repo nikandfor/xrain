@@ -334,8 +334,16 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 	if r != NilPage {
 		panic(r)
 	}
+
+	if t.root != l {
+		err = t.p.Reclaim(t.root)
+		if err != nil {
+			return err
+		}
+	}
+
 	t.root = l
-	log.Printf("root   %4x", t.root)
+	//log.Printf("root   %4x", t.root)
 
 	return nil
 }
