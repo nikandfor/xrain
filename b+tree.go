@@ -301,11 +301,7 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 		l, r = pl, pr
 	}
 
-	for r == NilPage && !t.p.IsLeaf(l) && t.p.NKeys(l) == 1 {
-		err = t.p.Reclaim(l)
-		if err != nil {
-			return err
-		}
+	if r == NilPage && !t.p.IsLeaf(l) && t.p.NKeys(l) == 1 {
 		l = t.p.Int64(l, 0)
 	}
 
