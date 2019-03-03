@@ -31,7 +31,7 @@ type (
 		Del(p int64, i int) (int64, error)
 
 		NeedRebalance(p int64) bool
-		Siblings(p int64, i int) (li int, l, r int64)
+		Siblings(p int64, i int, pi int64) (li int, l, r int64)
 		Rebalance(l, r int64) (l_, r_ int64, _ error)
 	}
 
@@ -76,25 +76,29 @@ func (l *BaseLayout) IsLeaf(off int64) bool {
 
 func (l *BaseLayout) Write(off int64, p []byte) (_ int64, _ []byte, err error) {
 	if off == NilPage {
-		goto alloc
+		return l.alloc()
 	}
 
 	if p == nil {
 		p = l.b.Load(off, l.page)
 	}
-	if l.getver(p) == l.ver {
+	ver := l.getver(p)
+	if ver == l.ver {
 		return off, p, nil
 	}
 
-alloc:
-	off, err = l.free.Alloc()
+	err = l.free.Reclaim(off, ver)
 	if err != nil {
 		return
 	}
 
-	p1 := l.b.Load(off, l.page)
-	copy(p1, p)
+	var p1 []byte
+	off, p1, err = l.alloc()
+	if err != nil {
+		return
+	}
 
+	copy(p1, p)
 	l.setver(p1, l.ver)
 
 	return off, p1, nil
@@ -111,11 +115,25 @@ func (l *BaseLayout) Reclaim(off int64) error {
 }
 
 func (l *BaseLayout) AllocRoot() (int64, error) {
-	off, p, err := l.Write(NilPage, nil)
+	off, p, err := l.alloc()
+	if err != nil {
+		return NilPage, err
+	}
 	p[0] = 0x80
-	p[1] = 0
+	l.setsize(p, 0)
 	l.setver(p, l.ver)
-	return off, err
+	return off, nil
+}
+
+func (l *BaseLayout) alloc() (off int64, p []byte, err error) {
+	off, err = l.free.Alloc()
+	if err != nil {
+		return
+	}
+
+	p = l.b.Load(off, l.page)
+
+	return off, p, nil
 }
 
 func (l *BaseLayout) getver(p []byte) int64 {
@@ -338,19 +356,20 @@ func (l *KVLayout) NeedRebalance(off int64) bool {
 	return sp > len(p)/2
 }
 
-func (l *KVLayout) Siblings(off int64, i int) (li int, loff, roff int64) {
+func (l *KVLayout) Siblings(off int64, i int, pi int64) (li int, loff, roff int64) {
 	p := l.b.Load(off, l.page)
 	n := l.nkeys(p)
 
 	var ri int
 	if i+1 < n && i&1 == 0 {
 		li, ri = i, i+1
+		loff = pi
+		roff = l.Int64(off, ri)
 	} else {
 		li, ri = i-1, i
+		loff = l.Int64(off, li)
+		roff = pi
 	}
-
-	loff = l.Int64(off, li)
-	roff = l.Int64(off, ri)
 
 	return
 }
@@ -386,6 +405,7 @@ func (l *KVLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) {
 		return
 	}
 
+	panic("fix moving")
 	if lsz > rsz {
 		diff := lsz - rsz
 		b := l.dataoff(lp, ln-1)
@@ -464,6 +484,7 @@ func (l *IntLayout) Del(off int64, i int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	//	log.Printf("Del %3x i %d\n%v", off, i, dumpPage(l, off))
 	n := l.nkeys(p)
 	st := 16 + i*16
 	end := 16 + n*16
@@ -548,24 +569,27 @@ func (l *IntLayout) NeedRebalance(off int64) bool {
 	return false
 }
 
-func (l *IntLayout) Siblings(off int64, i int) (li int, loff, roff int64) {
+func (l *IntLayout) Siblings(off int64, i int, pi int64) (li int, loff, roff int64) {
 	p := l.b.Load(off, l.page)
 	n := l.nkeys(p)
 
 	var ri int
 	if i+1 < n && i&1 == 0 {
 		li, ri = i, i+1
+		loff = pi
+		roff = l.Int64(off, ri)
 	} else {
 		li, ri = i-1, i
+		loff = l.Int64(off, li)
+		roff = pi
 	}
-
-	loff = l.Int64(off, li)
-	roff = l.Int64(off, ri)
 
 	return
 }
 
 func (l *IntLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) {
+	//	log.Printf("rebalance pages:\n%v\n%v", dumpPage(l, lpoff), dumpPage(l, rpoff))
+
 	loff, lp, err := l.Write(lpoff, nil)
 	if err != nil {
 		return
@@ -579,16 +603,17 @@ func (l *IntLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) 
 	lend := 16 + ln*16
 
 	if 16+sum*16 <= len(lp) {
+		//	log.Printf("merge pages %x %x -> %x (%d + %d = %d)", lpoff, rpoff, loff, ln, rn, sum)
 		copy(lp[lend:], rp[16:rend])
 		l.setsize(lp, sum)
 
-		//	log.Printf("reclain %x in rebalance %v %x", rpoff, l.ver, l.free.deferred)
+		//	log.Printf("reclain %x %d", rpoff, l.ver)
 		err = l.Reclaim(rpoff)
 		if err != nil {
 			return
 		}
 
-		//	log.Printf("rebalanced page %x\n%v", loff, hex.Dump(lp))
+		//	log.Printf("rebalanced page %x\n%v", loff, dumpPage(l, loff))
 
 		return loff, NilPage, nil
 	}
@@ -597,7 +622,6 @@ func (l *IntLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) 
 	if err != nil {
 		return
 	}
-	rp[0] = lp[0]
 
 	n := (sum + 1) / 2
 	end := 16 + n*16
@@ -605,11 +629,15 @@ func (l *IntLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) 
 	//	log.Printf("rebalance %x %x n %d %d  n %d  ends %x %x %x", lpoff, rpoff, ln, rn, n, end, lend, rend)
 
 	if ln > rn {
-		copy(rp[rend:], lp[end:lend])
+		diff := lend - end
+		copy(rp[16+diff:], rp[16:rend])
+		copy(rp[16:], lp[end:lend])
 		l.setsize(lp, n)
 		l.setsize(rp, sum-n)
 	} else {
-		copy(lp[lend:], rp[end:rend])
+		diff := rend - end
+		copy(lp[lend:], rp[16:16+diff])
+		copy(rp[16:], rp[16+diff:rend])
 		l.setsize(rp, n)
 		l.setsize(lp, sum-n)
 	}
@@ -742,4 +770,37 @@ func dumpFile(l PageLayout) string {
 		buf.WriteString(dumpPage(l, off))
 	}
 	return buf.String()
+}
+
+func checkPage(l PageLayout, off int64) {
+	n := l.NKeys(off)
+	var prev []byte
+	for i := 0; i < n; i++ {
+		k := l.Key(off, i)
+		if bytes.Compare(prev, k) != -1 {
+			log.Fatalf("at page %x of size %d  %2x goes before %2x", off, n, prev, k)
+		}
+		prev = k
+	}
+}
+
+func checkFile(l PageLayout) {
+	var b Back
+	switch l := l.(type) {
+	case LogLayout:
+		checkFile(l.PageLayout)
+		return
+	case *KVLayout:
+		b = l.b
+	case *IntLayout:
+		b = l.b
+	default:
+		panic(fmt.Sprintf("layout type %T", l))
+	}
+
+	b.Sync()
+	sz := b.Size()
+	for off := int64(0); off < sz; off += l.PageSize() {
+		checkPage(l, off)
+	}
 }

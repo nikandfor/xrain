@@ -11,11 +11,8 @@ type (
 
 		root int64
 		mask int64
-	}
 
-	Iterator struct {
-		t  *Tree
-		st []keylink
+		dd map[string]string
 	}
 
 	keylink int64
@@ -27,15 +24,24 @@ func NewTree(p PageLayout, root int64) *Tree {
 		panic(mask)
 	}
 	mask--
-	return &Tree{
+	t := &Tree{
 		p:    p,
 		root: root,
 		mask: mask,
+		dd:   make(map[string]string),
 	}
+
+	for k := t.Next(nil); k != nil; k = t.Next(k) {
+		t.dd[string(k)] = string(t.Get(k))
+	}
+
+	return t
 }
 
 func (t *Tree) Put(k, v []byte) (err error) {
 	st, eq := t.seek(nil, k)
+
+	//	log.Printf("root %x Put %x -> %x", t.root, k, v)
 
 	last := st[len(st)-1]
 	off := last.Off(t.mask)
@@ -53,11 +59,15 @@ func (t *Tree) Put(k, v []byte) (err error) {
 		return err
 	}
 
+	t.dd[string(k)] = string(v)
+
 	return t.out(st, l, r)
 }
 
 func (t *Tree) Del(k []byte) (err error) {
 	st, eq := t.seek(nil, k)
+
+	//	log.Printf("root %x Del %x", t.root, k)
 
 	if !eq {
 		return nil
@@ -71,6 +81,8 @@ func (t *Tree) Del(k []byte) (err error) {
 	if err != nil {
 		return err
 	}
+
+	delete(t.dd, string(k))
 
 	return t.out(st, l, NilPage)
 }
@@ -99,7 +111,11 @@ func (t *Tree) Next(k []byte) []byte {
 	off := last.Off(t.mask)
 	i := last.Index(t.mask)
 
-	return t.p.Key(off, i)
+	next := t.p.Key(off, i)
+
+	//	log.Printf("root %x Nxt %x -> %x", t.root, k, next)
+
+	return next
 }
 
 func (t *Tree) Prev(k []byte) []byte {
@@ -218,29 +234,29 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 	mask := t.mask
 	d := len(s)
 	for d -= 2; d >= 0; d-- {
-		log.Printf("out d  %v %x  lr %x %x", d+2, s, l, r)
+		//	log.Printf("out d  %v %x  lr %x %x", d+2, s, l, r)
 		par := s[d] // parent page
 		off := par.Off(mask)
 		i := par.Index(mask)
 		var rdel bool
-		if false {
-			log.Printf("stage0 d %d off %3x i %d lr %3x %3x\n%v", d, off, i, l, r, dumpFile(t.p))
-		}
 
 		// rebalance if needed
 		if r == NilPage && t.p.NeedRebalance(l) {
-			i, l, r = t.p.Siblings(off, i)
+			i, l, r = t.p.Siblings(off, i, l)
+			if i == -1 {
+				panic(off)
+			}
 			if r != NilPage {
 				l, r, err = t.p.Rebalance(l, r)
 				if err != nil {
 					return err
 				}
-				log.Printf("rebalanced %x r %x n %d", l, r, t.p.NKeys(l))
-				if r == NilPage {
-					rdel = true
-				}
+				//	log.Printf("rebalanced %x r %x n %d", l, r, t.p.NKeys(l))
+				rdel = true
 			}
 		}
+
+		//	log.Printf("stage0 d %d off %3x i %d lr %3x %3x\n%v", d, off, i, l, r, dumpFile(t.p))
 
 		// delete old link
 		off, err = t.p.Del(off, i)
@@ -255,6 +271,8 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 			}
 		}
 
+		//	log.Printf("stage1 d %d off %3x i %d lr %3x %3x\n%v", d, off, i, l, r, dumpFile(t.p))
+
 		// put left new child
 		lk := t.p.LastKey(l)
 		pl, pr, err := t.p.PutInt64(off, i, lk, l)
@@ -268,7 +286,8 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 			continue
 		}
 
-		log.Printf("stage1 d %d par %3x %3x i %d lr %3x %3x", d, pl, pr, i, l, r)
+		//	log.Printf("stage2 d %d par %3x %3x i %d lr %3x %3x", d, pl, pr, i, l, r)
+		//	log.Printf("page now\n%v", dumpPage(t.p, off))
 
 		rk := t.p.LastKey(r)
 		// we didn't split parent page yet
@@ -302,6 +321,10 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 	}
 
 	if r == NilPage && !t.p.IsLeaf(l) && t.p.NKeys(l) == 1 {
+		err = t.p.Reclaim(l)
+		if err != nil {
+			return err
+		}
 		l = t.p.Int64(l, 0)
 	}
 
@@ -331,15 +354,21 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 		panic(r)
 	}
 
-	if t.root != l {
-		err = t.p.Reclaim(t.root)
-		if err != nil {
-			return err
+	//	log.Printf("root   %4x <- %4x%v\n%v", l, t.root, callers(-1), dumpFile(t.p))
+	t.root = l
+
+	checkFile(t.p)
+
+	cnt := 0
+	for k := t.Next(nil); k != nil; k = t.Next(k) {
+		cnt++
+		if v, ok := t.dd[string(k)]; !ok || v != string(t.Get(k)) {
+			log.Fatalf("data mismatch: %x -> %x != %x (%v)", k, t.Get(k), []byte(v), ok)
 		}
 	}
-
-	t.root = l
-	//log.Printf("root   %4x", t.root)
+	if cnt != len(t.dd) {
+		log.Fatalf("data mismatch: expected %d keys, have %d", len(t.dd), cnt)
+	}
 
 	return nil
 }

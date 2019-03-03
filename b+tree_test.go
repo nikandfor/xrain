@@ -33,7 +33,7 @@ func newKVTree(n int, psize int64) (*Tree, Back) {
 func newKVTreeFL(psize int64, ver, keep int64) (*Tree, *FreeList, Back) {
 	b := NewMemBack(2 * psize)
 
-	free := NewFreeList(0, psize, psize, ver, keep, b)
+	free := NewFreeList(0, psize, 2*psize, psize, ver, keep, b)
 
 	pl := &KVLayout{BaseLayout: NewPageLayout(b, psize, ver, free)}
 	tr := NewTree(pl, psize)

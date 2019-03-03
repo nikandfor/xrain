@@ -3,7 +3,6 @@ package xrain
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"path"
 	"runtime"
 	"strings"
@@ -21,7 +20,7 @@ type (
 	FreeList struct {
 		ver, keep  int64
 		b          Back
-		t          *Tree
+		t0, t1     *Tree // get, put
 		last       []byte
 		page       int64
 		next, flen int64
@@ -31,11 +30,16 @@ type (
 	}
 
 	kv struct {
-		Key, Value []byte
+		Key, Value [8]byte
+		add        bool
 	}
 )
 
-func NewFreeList(root, next, page int64, ver, keep int64, b Back) *FreeList {
+func NewFreeList(root0, root1, next, page int64, ver, keep int64, b Back) *FreeList {
+	if root0 == root1 {
+		panic(root1)
+	}
+
 	flen := b.Size()
 
 	l := &FreeList{
@@ -48,9 +52,11 @@ func NewFreeList(root, next, page int64, ver, keep int64, b Back) *FreeList {
 	}
 
 	pl := &IntLayout{BaseLayout: NewPageLayout(b, page, ver, l)}
-	t := NewTree(pl, root)
+	t0 := NewTree(pl, root0)
+	t1 := NewTree(pl, root1)
 
-	l.t = t
+	l.t0 = t0
+	l.t1 = t1
 
 	return l
 }
@@ -70,9 +76,10 @@ func NewNoRewriteFreeList(page int64, b Back) *FreeList {
 }
 
 func (l *FreeList) Alloc() (off int64, err error) {
-	//	defer func() {
-	//		log.Printf("alloc %x%v", off, callers(1))
-	//	}()
+	//	defer func(last []byte) {
+	//		log.Printf("alloc  [%3x] %3x  (last %2x)%v", l.t0.root, off, last, callers(-1))
+	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
+	//	}(l.last)
 	/*
 		log.Printf("alloc in:  root %x last %2x next %x", l.t.root, l.last, l.next)
 		defer func() {
@@ -85,29 +92,36 @@ func (l *FreeList) Alloc() (off int64, err error) {
 	}
 
 next:
-	l.last = l.t.Next(l.last)
-	if l.last == nil {
+	next := l.t0.Next(l.last)
+	if next == nil {
 		l.exht = true
 		return l.allocGrow()
 	}
 
+	l.last = make([]byte, 8)
+	copy(l.last, next)
+
 	key := l.last
 	off = int64(binary.BigEndian.Uint64(key))
 
-	vbytes := l.t.Get(key)
+	cp := make([]byte, len(key))
+	copy(cp, key)
+
+	vbytes := l.t0.Get(key)
 	v := int64(binary.BigEndian.Uint64(vbytes))
 	if v >= l.keep {
 		goto next
 	}
 
 	if l.lock {
-		l.deferred = append(l.deferred, kv{Key: key})
+		l.deferred = append(l.deferred, newkv(key, nil))
+		//log.Printf("alloc (defer) %x  now len %d%v", off, len(l.deferred), callers(0))
 		return off, nil
 	}
 
 	l.lock = true
 
-	err = l.t.Del(key)
+	err = l.t0.Del(key)
 	if err != nil {
 		return 0, err
 	}
@@ -120,6 +134,34 @@ next:
 	return off, nil
 }
 
+func (l *FreeList) Reclaim(off, ver int64) error {
+	//	defer func() {
+	//		log.Printf("reclaim[%3x] %3x %d%v", l.t1.root, off, ver, callers(-1))
+	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
+	//	}()
+
+	if l.t1 == nil {
+		return nil
+	}
+
+	kv := newkvint(off, ver, true)
+
+	if l.lock {
+		l.deferred = append(l.deferred, kv)
+		//log.Printf("free  (defer) %x  now len %d%v", off, len(l.deferred), callers(0))
+		return nil
+	}
+
+	l.lock = true
+
+	err := l.t1.Put(kv.Key[:], kv.Value[:])
+	if err != nil {
+		return err
+	}
+
+	return l.unlock()
+}
+
 func (l *FreeList) allocGrow() (int64, error) {
 	off := l.next
 	if err := l.growFile(off + l.page); err != nil {
@@ -128,34 +170,6 @@ func (l *FreeList) allocGrow() (int64, error) {
 	l.next += l.page
 
 	return off, nil
-}
-
-func (l *FreeList) Reclaim(off, ver int64) error {
-	//	defer func() {
-	//		log.Printf("reclaim %x %d%v", off, ver, callers(1))
-	//	}()
-
-	if l.t == nil {
-		return nil
-	}
-
-	var buf [16]byte
-	binary.BigEndian.PutUint64(buf[:8], uint64(off))
-	binary.BigEndian.PutUint64(buf[8:], uint64(ver))
-
-	if l.lock {
-		l.deferred = append(l.deferred, kv{Key: buf[:8], Value: buf[8:16]})
-		return nil
-	}
-
-	l.lock = true
-
-	err := l.t.Put(buf[:8], buf[8:16])
-	if err != nil {
-		return err
-	}
-
-	return l.unlock()
 }
 
 func (l *FreeList) growFile(sz int64) error {
@@ -186,19 +200,19 @@ func (l *FreeList) growFile(sz int64) error {
 }
 
 func (l *FreeList) unlock() (err error) {
-	log.Printf("unlock: %q   root %x\n%v%v", l.deferred, l.t.root, dumpFile(l.t.p), callers(0))
+	//	log.Printf("unlock: root %x %x  %x\n%v%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p), callers(0))
 
 	for i := 0; i < len(l.deferred); i++ {
 		kv := l.deferred[i]
-		//	log.Printf("do deferred: %x -> %x on root %x ver %d\n%v", kv.Key, kv.Value, l.t.root, l.ver, dumpFile(l.t.p))
-		if kv.Value == nil {
-			err = l.t.Del(kv.Key)
+		if kv.add {
+			err = l.t1.Put(kv.Key[:], kv.Value[:])
 		} else {
-			err = l.t.Put(kv.Key, kv.Value)
+			err = l.t0.Del(kv.Key[:])
 		}
 		if err != nil {
 			return
 		}
+		//	log.Printf("deferred(%d)'ve done: %x -> %x on root %x %x ver %d  defer %x\n%v", i, kv.Key, kv.Value, l.t0.root, l.t1.root, l.ver, l.deferred[i+1:], "" /*dumpFile(l.t0.p)*/)
 	}
 
 	l.deferred = l.deferred[:0]
@@ -207,7 +221,28 @@ func (l *FreeList) unlock() (err error) {
 	return nil
 }
 
+func newkv(k, v []byte) kv {
+	r := kv{}
+	copy(r.Key[:], k)
+	if v != nil {
+		copy(r.Value[:], v)
+		r.add = true
+	}
+	return r
+}
+
+func newkvint(k, v int64, add bool) kv {
+	r := kv{add: add}
+	binary.BigEndian.PutUint64(r.Key[:], uint64(k))
+	binary.BigEndian.PutUint64(r.Value[:], uint64(v))
+	return r
+}
+
 func callers(skip int) string {
+	if skip < 0 {
+		return ""
+	}
+
 	var pc [100]uintptr
 	n := runtime.Callers(2+skip, pc[:])
 
