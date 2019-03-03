@@ -224,6 +224,11 @@ func (d *DB) initEmpty() (err error) {
 		rp.free0 = 3 * d.page
 		rp.free1 = 4 * d.page
 		rp.next = 5 * d.page
+
+		for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
+			m.depth = 1
+			m.pages = 1
+		}
 	}
 
 	d.writeRoot()
@@ -272,11 +277,6 @@ again:
 			s += 0x8
 		}
 	}
-}
-
-func (d *DB) init(p []byte) (err error) {
-
-	return
 }
 
 func assert_(c bool, f string, args ...interface{}) {
