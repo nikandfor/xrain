@@ -7,6 +7,7 @@ const Mb = 1 << 30
 type (
 	Back interface {
 		Access(off, len int64, f func(p []byte))
+		Copy(roff, off, len int64) error
 		Size() int64
 		Truncate(size int64) error
 		Sync() error
@@ -28,11 +29,16 @@ func (b *MemBack) Access(off, l int64, f func(p []byte)) {
 	defer b.mu.RUnlock()
 	b.mu.RLock()
 
-	if int(off+l) > len(b.d) {
-		panic("out of range")
-	}
-
 	f(b.d[off : off+l])
+}
+
+func (b *MemBack) Copy(roff, off, len int64) error {
+	defer b.mu.RUnlock()
+	b.mu.RLock()
+
+	copy(b.d[roff:], b.d[off:off+len])
+
+	return nil
 }
 
 func (b *MemBack) Truncate(s int64) error {
