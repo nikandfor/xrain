@@ -14,14 +14,16 @@ type (
 		root int64
 		mask int64
 
+		meta *treemeta
+
 		dd map[string]string
 	}
 
 	keylink int64
 )
 
-func NewTree(p PageLayout, root int64) *Tree {
-	mask := p.PageSize()
+func NewTree(p PageLayout, root, page int64) *Tree {
+	mask := page
 	if mask&(mask-1) != 0 {
 		panic(mask)
 	}
@@ -40,6 +42,13 @@ func NewTree(p PageLayout, root int64) *Tree {
 	}
 
 	return t
+}
+
+func (t *Tree) Size() int {
+	if t.meta == nil {
+		return 0
+	}
+	return int(t.meta.n)
 }
 
 func (t *Tree) Put(k, v []byte) (err error) {
@@ -67,6 +76,10 @@ func (t *Tree) Put(k, v []byte) (err error) {
 		t.dd[string(k)] = string(v)
 	}
 
+	if t.meta != nil && !eq {
+		t.meta.n++
+	}
+
 	return t.out(st, l, r)
 }
 
@@ -90,6 +103,10 @@ func (t *Tree) Del(k []byte) (err error) {
 
 	if debugChecks {
 		delete(t.dd, string(k))
+	}
+
+	if t.meta != nil {
+		t.meta.n--
 	}
 
 	return t.out(st, l, NilPage)
@@ -334,6 +351,10 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 			return err
 		}
 		l = t.p.Int64(l, 0)
+
+		if t.meta != nil {
+			t.meta.depth--
+		}
 	}
 
 	if r != NilPage {
@@ -356,6 +377,10 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 
 		l = off
 		r = NilPage
+
+		if t.meta != nil {
+			t.meta.depth++
+		}
 	}
 
 	if r != NilPage {

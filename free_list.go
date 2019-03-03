@@ -3,6 +3,7 @@ package xrain
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"path"
 	"runtime"
 	"strings"
@@ -18,15 +19,17 @@ const (
 
 type (
 	FreeList struct {
-		ver, keep  int64
-		b          Back
-		t0, t1     *Tree // get, put
+		ver, keep int64
+		b         Back
+		t0, t1    *Tree // get, put
+
 		last       []byte
 		page       int64
 		next, flen int64
 		deferred   []kv
-		exht       bool
-		lock       bool
+
+		exht bool
+		lock bool
 	}
 
 	kv struct {
@@ -35,7 +38,32 @@ type (
 	}
 )
 
-func NewFreeList(root0, root1, next, page int64, ver, keep int64, b Back) *FreeList {
+func NewFreeList(t0, t1 *Tree, next, page int64, ver, keep int64, b Back) *FreeList {
+	if t0 == t1 {
+		assert_(t0 != t1, "must be 2 distinct trees")
+	}
+
+	if t0.Size() < t1.Size() {
+		t0, t1 = t1, t0
+	}
+
+	flen := b.Size()
+
+	l := &FreeList{
+		t0:   t0,
+		t1:   t1,
+		ver:  ver,
+		keep: keep,
+		b:    b,
+		page: page,
+		next: next,
+		flen: flen,
+	}
+
+	return l
+}
+
+func NewFreeList_(root0, root1, next, page int64, ver, keep int64, b Back) *FreeList {
 	if root0 == root1 {
 		panic(root1)
 	}
@@ -52,8 +80,8 @@ func NewFreeList(root0, root1, next, page int64, ver, keep int64, b Back) *FreeL
 	}
 
 	pl := &IntLayout{BaseLayout: NewPageLayout(b, page, ver, l)}
-	t0 := NewTree(pl, root0)
-	t1 := NewTree(pl, root1)
+	t0 := NewTree(pl, root0, page)
+	t1 := NewTree(pl, root1, page)
 
 	size := func(t *Tree) (c int) {
 		for k := t.Next(nil); k != nil; k = t.Next(k) {
@@ -104,6 +132,8 @@ func (l *FreeList) Alloc() (off int64, err error) {
 
 next:
 	next := l.t0.Next(l.last)
+
+	log.Printf("Alloc nxt %x <- %x   next %x", next, l.last, l.next)
 	if next == nil {
 		l.exht = true
 		return l.allocGrow()

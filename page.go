@@ -12,7 +12,6 @@ const NilPage = -1
 
 type (
 	PageLayout interface {
-		PageSize() int64
 		AllocRoot() (int64, error)
 		Reclaim(p int64) error
 
@@ -35,11 +34,13 @@ type (
 		Rebalance(l, r int64) (l_, r_ int64, _ error)
 	}
 
-	BaseLayout struct { // isbranch bit, size uint15, _ [6]byte, ver int64
+	BaseLayout struct { // isbranch bit, size uint15, extended uint24, _ [3]byte, ver int64
 		b    Back
 		page int64
 		ver  int64
 		free *FreeList
+
+		meta *treemeta
 	}
 
 	KVLayout struct { // base [2]byte, keys [size]int16, data []byte
@@ -58,10 +59,6 @@ func NewPageLayout(b Back, psize, ver int64, free *FreeList) BaseLayout {
 		ver:  ver,
 		free: free,
 	}
-}
-
-func (l *BaseLayout) PageSize() int64 {
-	return l.page
 }
 
 func (l *BaseLayout) NKeys(off int64) int {
@@ -697,6 +694,7 @@ func dumpPage(l PageLayout, off int64) string {
 	var base *BaseLayout
 	var kvl *KVLayout
 	var intl *IntLayout
+	var page int64
 	switch l := l.(type) {
 	case LogLayout:
 		return dumpPage(l.PageLayout, off)
@@ -704,15 +702,17 @@ func dumpPage(l PageLayout, off int64) string {
 		b = l.b
 		base = &l.BaseLayout
 		kvl = l
+		page = l.page
 	case *IntLayout:
 		b = l.b
 		base = &l.BaseLayout
 		intl = l
+		page = l.page
 	default:
 		panic(fmt.Sprintf("layout type %T", l))
 	}
 
-	p := b.Load(off, l.PageSize())
+	p := b.Load(off, page)
 	var buf bytes.Buffer
 	tp := 'B'
 	if l.IsLeaf(off) {
@@ -752,13 +752,16 @@ func dumpPage(l PageLayout, off int64) string {
 
 func dumpFile(l PageLayout) string {
 	var b Back
+	var page int64
 	switch l := l.(type) {
 	case LogLayout:
 		return dumpFile(l.PageLayout)
 	case *KVLayout:
 		b = l.b
+		page = l.page
 	case *IntLayout:
 		b = l.b
+		page = l.page
 	default:
 		panic(fmt.Sprintf("layout type %T", l))
 	}
@@ -766,7 +769,7 @@ func dumpFile(l PageLayout) string {
 	var buf strings.Builder
 	b.Sync()
 	sz := b.Size()
-	for off := int64(0); off < sz; off += l.PageSize() {
+	for off := int64(0); off < sz; off += page {
 		buf.WriteString(dumpPage(l, off))
 	}
 	return buf.String()
@@ -786,21 +789,24 @@ func checkPage(l PageLayout, off int64) {
 
 func checkFile(l PageLayout) {
 	var b Back
+	var page int64
 	switch l := l.(type) {
 	case LogLayout:
 		checkFile(l.PageLayout)
 		return
 	case *KVLayout:
 		b = l.b
+		page = l.page
 	case *IntLayout:
 		b = l.b
+		page = l.page
 	default:
 		panic(fmt.Sprintf("layout type %T", l))
 	}
 
 	b.Sync()
 	sz := b.Size()
-	for off := int64(0); off < sz; off += l.PageSize() {
+	for off := int64(0); off < sz; off += page {
 		checkPage(l, off)
 	}
 }

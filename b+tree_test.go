@@ -16,7 +16,7 @@ func newIntTree(n int, psize int64) (*Tree, Back) {
 	b := NewMemBack(int64(n) * psize)
 	free := NewNoRewriteFreeList(psize, b)
 	pl := &IntLayout{BaseLayout: NewPageLayout(b, psize, 0, free)}
-	tr := NewTree(pl, 0)
+	tr := NewTree(pl, 0, psize)
 	tr.p = LogLayout{PageLayout: tr.p, Logger: log.New(os.Stderr, "", log.LstdFlags)}
 	return tr, b
 }
@@ -25,7 +25,7 @@ func newKVTree(n int, psize int64) (*Tree, Back) {
 	b := NewMemBack(int64(n) * psize)
 	free := NewNoRewriteFreeList(psize, b)
 	pl := &KVLayout{BaseLayout: NewPageLayout(b, psize, 0, free)}
-	tr := NewTree(pl, 0)
+	tr := NewTree(pl, 0, psize)
 	tr.p = LogLayout{PageLayout: tr.p, Logger: log.New(os.Stderr, "", log.LstdFlags)}
 	return tr, b
 }
@@ -33,10 +33,15 @@ func newKVTree(n int, psize int64) (*Tree, Back) {
 func newKVTreeFL(psize int64, ver, keep int64) (*Tree, *FreeList, Back) {
 	b := NewMemBack(2 * psize)
 
-	free := NewFreeList(0, psize, 2*psize, psize, ver, keep, b)
+	fl := &IntLayout{BaseLayout: BaseLayout{b: b, page: psize}}
+
+	f0 := NewTree(fl, 0, psize)
+	f1 := NewTree(fl, psize, psize)
+
+	free := NewFreeList(f0, f1, 2*psize, psize, ver, keep, b)
 
 	pl := &KVLayout{BaseLayout: NewPageLayout(b, psize, ver, free)}
-	tr := NewTree(pl, psize)
+	tr := NewTree(pl, psize, psize)
 	tr.p = LogLayout{PageLayout: tr.p, Logger: log.New(os.Stderr, "kv: ", log.LstdFlags)}
 	return tr, free, b
 }

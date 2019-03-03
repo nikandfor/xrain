@@ -41,62 +41,6 @@ func TestDumpFreeList(t *testing.T) {
 	assert.Equal(t, 3*int64(Page), off)
 }
 
-func TestFreeListManual(t *testing.T) {
-	t.Skip()
-
-	const Page = 0x40
-
-	b := NewMemBack(2 * Page)
-	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
-
-	log.Printf("First")
-
-	fl := NewFreeList(0, Page, 2*Page, Page, 0, -1, b)
-
-	off1, err := fl.Alloc()
-	assert.NoError(t, err)
-	assert.Equal(t, 1*int64(Page), off1)
-	pl.setver(b.Load(off1, Page), 0)
-
-	off2, err := fl.Alloc()
-	assert.NoError(t, err)
-	assert.Equal(t, 2*int64(Page), off2)
-	pl.setver(b.Load(off2, Page), 0)
-
-	err = fl.Reclaim(off2, 0)
-	assert.NoError(t, err)
-
-	err = fl.Reclaim(off1, 0)
-	assert.NoError(t, err)
-
-	log.Printf("Second")
-
-	fl = NewFreeList(fl.t1.root, fl.t0.root, fl.next, Page, 1, 0, b)
-
-	off3, err := fl.Alloc()
-	assert.NoError(t, err)
-	assert.Equal(t, 3*int64(Page), off3)
-	pl.setver(b.Load(off3, Page), 1)
-
-	log.Printf("dump free root %x %x  next %x\n%v", fl.t0.root, fl.t1.root, fl.next, dumpFile(pl))
-
-	log.Printf("Third")
-
-	fl = NewFreeList(fl.t0.root, fl.t1.root, fl.next, Page, 2, 1, b)
-
-	off1, err = fl.Alloc()
-	assert.NoError(t, err)
-	assert.Equal(t, 1*int64(Page), off1, "%x %x", Page, off1)
-	pl.setver(b.Load(off1, Page), 2)
-
-	off2, err = fl.Alloc()
-	assert.NoError(t, err)
-	assert.Equal(t, 4*int64(Page), off2, "%x %x", 2*Page, off2)
-	pl.setver(b.Load(off2, Page), 2)
-
-	log.Printf("dump free root %x %x  next %x\n%v", fl.t0.root, fl.t1.root, fl.next, dumpFile(pl))
-}
-
 func TestFreeListAuto(t *testing.T) {
 	defer func() {
 		debugChecks = false
@@ -105,13 +49,19 @@ func TestFreeListAuto(t *testing.T) {
 
 	const (
 		Page = 0x100
-		N    = 100
+		N    = 40
 	)
 
 	b := NewMemBack(2 * Page)
 	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
 
-	fl := NewFreeList(0, Page, 2*Page, Page, 0, -1, b)
+	f0 := NewTree(pl, 0, Page)
+	f1 := NewTree(pl, Page, Page)
+	f0.meta = &treemeta{}
+	f1.meta = &treemeta{}
+
+	fl := NewFreeList(f0, f1, 2*Page, Page, 0, -1, b)
+	pl.free = fl
 
 	var taken []int64
 	var used, recl map[int64]struct{}
@@ -192,7 +142,9 @@ func TestFreeListAuto(t *testing.T) {
 			for i := 0; i < 3*N; i++ {
 				ver := basever + int64(i)
 
-				fl = NewFreeList(fl.t1.root, fl.t0.root, fl.next, Page, ver, ver-1, b)
+				fl = NewFreeList(fl.t1, fl.t0, fl.next, Page, ver, ver-1, b)
+				pl.ver = ver
+				pl.free = fl
 
 				available, available2 := 0, 0
 				nextwas := fl.next
@@ -219,13 +171,13 @@ func TestFreeListAuto(t *testing.T) {
 				assert.False(t, fl.lock)
 				assert.Empty(t, fl.deferred)
 
-				//	log.Printf("%d %d/%d ___ root %x %x  next %x taken %x\n%v", ii, j, i, fl.t0.root, fl.t1.root, fl.next, taken, dumpFile(pl))
+				log.Printf("%d %d/%d ___ root %x %x  next %x taken %x\n%v", ii, j, i, fl.t0.root, fl.t1.root, fl.next, taken, dumpFile(pl))
 
 				if check(len(taken)) {
 					return
 				}
 
-				//	log.Printf("out of %d pages: %d taken %d used %d free", fl.next/Page, len(taken), len(used), len(recl))
+				log.Printf("out of %d pages: %d taken %d used %d free", fl.next/Page, len(taken), len(used), len(recl))
 
 				{
 					cnt := 0
@@ -277,7 +229,11 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	b := NewMemBack(2 * Page)
 	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
 
-	fl := NewFreeList(0, Page, 2*Page, Page, 0, -1, b)
+	f0 := NewTree(pl, 0, Page)
+	f1 := NewTree(pl, Page, Page)
+
+	fl := NewFreeList(f0, f1, 2*Page, Page, 0, -1, b)
+	pl.free = fl
 
 	var taken []int64
 
@@ -307,7 +263,8 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	for i := 0; i < t.N; i++ {
 		ver := int64(i)
 
-		fl = NewFreeList(fl.t1.root, fl.t0.root, fl.next, Page, ver, ver-1, b)
+		pl.ver = ver
+		fl = NewFreeList(fl.t1, fl.t0, fl.next, Page, ver, ver-1, b)
 
 		if (i+1)%3 == 0 {
 			free(ver)
@@ -323,7 +280,11 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 	b := NewMemBack(2 * Page)
 	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
 
-	fl := NewFreeList(0, Page, 2*Page, Page, 0, -1, b)
+	f0 := NewTree(pl, 0, Page)
+	f1 := NewTree(pl, Page, Page)
+
+	fl := NewFreeList(f0, f1, 2*Page, Page, 0, -1, b)
+	pl.free = fl
 
 	var taken []int64
 
