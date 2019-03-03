@@ -98,20 +98,25 @@ func TestFreeListManual(t *testing.T) {
 }
 
 func TestFreeListAuto(t *testing.T) {
+	defer func() {
+		debugChecks = false
+	}()
+	debugChecks = true
+
 	const (
-		Page = 0x80
-		N    = 20
-		M    = 10
+		Page = 0x100
+		N    = 100
 	)
 
 	b := NewMemBack(2 * Page)
 	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
 
-	log.Printf("First")
 	fl := NewFreeList(0, Page, 2*Page, Page, 0, -1, b)
 
 	var taken []int64
 	var used, recl map[int64]struct{}
+	var lastused int64
+	var lastgrow int
 
 	alloc := func(ver int64) {
 		off, err := fl.Alloc()
@@ -138,6 +143,7 @@ func TestFreeListAuto(t *testing.T) {
 	check := func(n int) bool {
 		used = map[int64]struct{}{}
 		recl = map[int64]struct{}{}
+		lastused = 0
 
 		var add func(int64)
 		add = func(off int64) {
@@ -155,6 +161,9 @@ func TestFreeListAuto(t *testing.T) {
 				}
 			}
 			used[off] = struct{}{}
+			if off > lastused {
+				lastused = off
+			}
 		}
 
 		add(fl.t0.root)
@@ -175,7 +184,8 @@ func TestFreeListAuto(t *testing.T) {
 	basever := int64(0)
 	maxnext := int64(0)
 
-	for j := 0; j < M; j++ {
+	var j int
+	for j = 0; j < 5; j++ {
 		//	log.Printf("ver %3d  j %d first", basever, j)
 
 		for ii := 0; ii < 2; ii++ {
@@ -183,6 +193,22 @@ func TestFreeListAuto(t *testing.T) {
 				ver := basever + int64(i)
 
 				fl = NewFreeList(fl.t1.root, fl.t0.root, fl.next, Page, ver, ver-1, b)
+
+				available, available2 := 0, 0
+				nextwas := fl.next
+				{
+					calc := func(t *Tree, c *int) {
+						for k := t.Next(nil); k != nil; k = t.Next(k) {
+							v := t.Get(k)
+							ver := int64(binary.BigEndian.Uint64(v))
+							if ver < fl.keep {
+								(*c)++
+							}
+						}
+					}
+					calc(fl.t0, &available)
+					calc(fl.t1, &available2)
+				}
 
 				if (i+1-ii)%3 == 0 == (ii == 0) {
 					free(ver)
@@ -198,7 +224,24 @@ func TestFreeListAuto(t *testing.T) {
 				if check(len(taken)) {
 					return
 				}
+
 				//	log.Printf("out of %d pages: %d taken %d used %d free", fl.next/Page, len(taken), len(used), len(recl))
+
+				{
+					cnt := 0
+					for off := int64(0); off < fl.next; off += Page {
+						p := b.Load(off, Page)
+						if pl.getver(p) == fl.ver {
+							cnt++
+						}
+					}
+					if fl.next != nextwas {
+						if j > 1 {
+							log.Fatalf("we changed %3d pages out of %3d (%3d) for update. next %3d <- %3d. is: %d %d %d", cnt, available, available2, fl.next/Page, nextwas/Page, j, ii, i)
+						}
+						lastgrow = j + 1
+					}
+				}
 
 				if fl.next > maxnext {
 					t := fl.t0
@@ -220,6 +263,102 @@ func TestFreeListAuto(t *testing.T) {
 		assert.True(t, len(taken) == 0, "test is broken")
 
 		//	log.Printf("dump free root %x %x  next %x\n%v", fl.t0.root, fl.t1.root, fl.next, dumpFile(pl))
-		log.Printf("out of %d pages: %d taken %d used %d free", fl.next/Page, len(taken), len(used), len(recl))
+		//	log.Printf("out of %d pages: %d taken %d used %d free. lastused %5x (%3d) ver %4d", fl.next/Page, len(taken), len(used), len(recl), lastused, lastused/Page, fl.ver)
+	}
+	//	log.Printf("dump free root %x %x  next %x\n%v", fl.t0.root, fl.t1.root, fl.next, dumpFile(pl))
+	log.Printf("out of %d pages: %d taken %d used %d free. lastused %5x (%3d) ver %4d", fl.next/Page, len(taken), len(used), len(recl), lastused, lastused/Page, fl.ver)
+
+	log.Printf("for page size 0x%x and %d*3 alloc/free cycles we've made %d iterations, last file grow was at %d", Page, N, j, lastgrow)
+}
+
+func BenchmarkFreeListVerInc(t *testing.B) {
+	const Page = 0x100
+
+	b := NewMemBack(2 * Page)
+	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
+
+	fl := NewFreeList(0, Page, 2*Page, Page, 0, -1, b)
+
+	var taken []int64
+
+	alloc := func(ver int64) {
+		off, err := fl.Alloc()
+		assert.NoError(t, err)
+
+		//	log.Printf("ver %3d alloc %x", ver, off)
+
+		pl.setver(b.Load(off, Page), ver)
+
+		taken = append(taken, off)
+	}
+	free := func(cv int64) {
+		l := len(taken) - 1
+		off := taken[l]
+		taken = taken[:l]
+
+		ver := pl.getver(b.Load(off, Page))
+
+		//	log.Printf("ver %3d free  %x", cv, off)
+
+		err := fl.Reclaim(off, ver)
+		assert.NoError(t, err)
+	}
+
+	for i := 0; i < t.N; i++ {
+		ver := int64(i)
+
+		fl = NewFreeList(fl.t1.root, fl.t0.root, fl.next, Page, ver, ver-1, b)
+
+		if (i+1)%3 == 0 {
+			free(ver)
+		} else {
+			alloc(ver)
+		}
+	}
+}
+
+func BenchmarkFreeListVerConst(t *testing.B) {
+	const Page = 0x100
+
+	b := NewMemBack(2 * Page)
+	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
+
+	fl := NewFreeList(0, Page, 2*Page, Page, 0, -1, b)
+
+	var taken []int64
+
+	alloc := func(ver int64) {
+		off, err := fl.Alloc()
+		assert.NoError(t, err)
+
+		//	log.Printf("ver %3d alloc %x", ver, off)
+
+		pl.setver(b.Load(off, Page), ver)
+
+		taken = append(taken, off)
+	}
+	free := func(cv int64) {
+		l := len(taken) - 1
+		off := taken[l]
+		taken = taken[:l]
+
+		ver := pl.getver(b.Load(off, Page))
+
+		//	log.Printf("ver %3d free  %x", cv, off)
+
+		err := fl.Reclaim(off, ver)
+		assert.NoError(t, err)
+	}
+
+	for i := 0; i < t.N; i++ {
+		//	ver := int64(i)
+
+		//	fl = NewFreeList(fl.t1.root, fl.t0.root, fl.next, Page, ver, ver-1, b)
+
+		if (i+1)%3 == 0 {
+			free(fl.ver)
+		} else {
+			alloc(fl.ver)
+		}
 	}
 }

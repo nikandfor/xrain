@@ -55,6 +55,17 @@ func NewFreeList(root0, root1, next, page int64, ver, keep int64, b Back) *FreeL
 	t0 := NewTree(pl, root0)
 	t1 := NewTree(pl, root1)
 
+	size := func(t *Tree) (c int) {
+		for k := t.Next(nil); k != nil; k = t.Next(k) {
+			c++
+		}
+		return
+	}
+
+	if size(t0) < size(t1) {
+		t0, t1 = t1, t0
+	}
+
 	l.t0 = t0
 	l.t1 = t1
 
@@ -184,11 +195,13 @@ func (l *FreeList) growFile(sz int64) error {
 			l.flen *= 2
 		} else if l.flen < 100*MiB {
 			l.flen += l.flen / 4
-		} else if l.flen < 1*GiB {
+		} else if l.flen < GiB {
 			l.flen += l.flen / 16
 		} else {
-			l.flen += 64 * MiB
+			l.flen += GiB / 16 // 64 MiB
 		}
+
+		l.flen -= l.flen % l.page
 	}
 
 	err := l.b.Truncate(l.flen)
