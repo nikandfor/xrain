@@ -141,7 +141,10 @@ next:
 	return off, nil
 }
 
-func (l *FreeList) Reclaim(off, ver int64) error {
+func (l *FreeList) Reclaim(n int, off, ver int64) error {
+	if n != 1 {
+		panic(n)
+	}
 	//	defer func() {
 	//		log.Printf("reclaim[%3x] %3x %d%v", l.t1.root, off, ver, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))

@@ -82,28 +82,17 @@ func (l *BaseLayout) Reclaim(off int64) error {
 	}
 
 	var ver int64
+	var n int
 	l.b.Access(off, 0x10, func(p []byte) {
 		ver = l.getver(p)
+		n = l.extended(p)
 	})
 
-	return l.free.Reclaim(off, ver)
+	return l.free.Reclaim(n, off, ver)
 }
 
-func (l *BaseLayout) AllocRoot() (int64, error) {
-	off, err := l.alloc(1, NilPage, 0)
-	if err != nil {
-		return NilPage, err
-	}
-	l.b.Access(off, 0x10, func(p []byte) {
-		p[0] = 0x80
-		l.setsize(p, 0)
-		l.setver(p, l.ver)
-	})
-	return off, nil
-}
-
-func (l *BaseLayout) alloc(n int, off, ver int64) (noff int64, err error) {
-	noff, err = l.free.Alloc(n)
+func (l *BaseLayout) alloc(nold, nnew int, off, ver int64) (noff int64, err error) {
+	noff, err = l.free.Alloc(nnew)
 	if err != nil {
 		return
 	}
@@ -112,12 +101,16 @@ func (l *BaseLayout) alloc(n int, off, ver int64) (noff int64, err error) {
 		return noff, nil
 	}
 
-	err = l.free.Reclaim(off, ver)
+	err = l.free.Reclaim(nold, off, ver)
 	if err != nil {
 		return
 	}
 
-	err = l.b.Copy(noff, off, int64(n)*l.page)
+	min := nold
+	if nnew < min {
+		min = nnew
+	}
+	err = l.b.Copy(noff, off, int64(min)*l.page)
 	if err != nil {
 		return
 	}
@@ -144,13 +137,42 @@ func (l *BaseLayout) nkeys(p []byte) int {
 	return int(p[0])&0x7f<<8 | int(p[1])
 }
 
+func (l *BaseLayout) extended(p []byte) int {
+	return (int(p[2])<<16 | int(p[3])<<8 | int(p[4])) + 1
+}
+
 func (l *BaseLayout) setsize(p []byte, n int) {
 	p[0] = p[0]&0x80 | byte(n>>8&0x7f)
 	p[1] = byte(n)
 }
 
+func (l *BaseLayout) setextended(p []byte, n int) {
+	n--
+	p[2] = byte(n >> 16)
+	p[3] = byte(n >> 8)
+	p[4] = byte(n)
+}
+
 func (l *FixedLayout) alloc(off, ver int64) (_ int64, err error) {
-	return l.BaseLayout.alloc(l.pm, off, ver)
+	return l.BaseLayout.alloc(l.pm, l.pm, off, ver)
+}
+
+func (l *FixedLayout) setheader(p []byte) {
+	l.setver(p, l.ver)
+	l.setextended(p, l.pm)
+}
+
+func (l *FixedLayout) AllocRoot() (int64, error) {
+	off, err := l.alloc(NilPage, 0)
+	if err != nil {
+		return NilPage, err
+	}
+	l.b.Access(off, 0x10, func(p []byte) {
+		p[0] = 0x80
+		l.setsize(p, 0)
+		l.setheader(p)
+	})
+	return off, nil
 }
 
 func (l *FixedLayout) KeyCmp(off int64, i int, k []byte) (r int) {
@@ -267,7 +289,7 @@ func (l *FixedLayout) Del(off int64, i int) (_ int64, err error) {
 again:
 	l.b.Access(off, l.p, func(p []byte) {
 		if alloc {
-			l.setver(p, l.ver)
+			l.setheader(p)
 			alloc = false
 		} else {
 			ver = l.getver(p)
@@ -306,7 +328,7 @@ func (l *FixedLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err 
 again:
 	l.b.Access(off, l.p, func(p []byte) {
 		if alloc {
-			l.setver(p, ver)
+			l.setheader(p)
 			alloc = false
 		} else {
 			ver = l.getver(p)
@@ -353,9 +375,9 @@ again:
 	}
 
 	l.b.Access2(loff, l.p, roff, l.p, func(lp, rp []byte) {
-		l.setver(lp, ver)
-		l.setver(rp, ver)
 		rp[0] = lp[0]
+		l.setheader(lp)
+		l.setheader(rp)
 
 		kv := l.kv
 		if lp[0]&0x80 != 0 {
@@ -441,7 +463,7 @@ again:
 		lend := 16 + ln*kv
 
 		if lalloc {
-			l.setver(lp, l.ver)
+			l.setheader(lp)
 			lalloc = false
 		} else {
 			lver = l.getver(lp)
@@ -451,7 +473,7 @@ again:
 		}
 
 		if ralloc {
-			l.setver(rp, l.ver)
+			l.setheader(rp)
 			ralloc = false
 		} else {
 			rver = l.getver(rp)
