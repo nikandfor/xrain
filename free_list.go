@@ -63,43 +63,6 @@ func NewFreeList(t0, t1 *Tree, next, page int64, ver, keep int64, b Back) *FreeL
 	return l
 }
 
-func NewFreeList_(root0, root1, next, page int64, ver, keep int64, b Back) *FreeList {
-	if root0 == root1 {
-		panic(root1)
-	}
-
-	flen := b.Size()
-
-	l := &FreeList{
-		ver:  ver,
-		keep: keep,
-		b:    b,
-		page: page,
-		next: next,
-		flen: flen,
-	}
-
-	pl := &IntLayout{BaseLayout: NewPageLayout(b, page, ver, l)}
-	t0 := NewTree(pl, root0, page)
-	t1 := NewTree(pl, root1, page)
-
-	size := func(t *Tree) (c int) {
-		for k := t.Next(nil); k != nil; k = t.Next(k) {
-			c++
-		}
-		return
-	}
-
-	if size(t0) < size(t1) {
-		t0, t1 = t1, t0
-	}
-
-	l.t0 = t0
-	l.t1 = t1
-
-	return l
-}
-
 func NewNoRewriteFreeList(page int64, b Back) *FreeList {
 	flen := b.Size()
 
@@ -114,7 +77,10 @@ func NewNoRewriteFreeList(page int64, b Back) *FreeList {
 	return l
 }
 
-func (l *FreeList) Alloc() (off int64, err error) {
+func (l *FreeList) Alloc(n int) (off int64, err error) {
+	if n != 1 {
+		panic(n)
+	}
 	//	defer func(last []byte) {
 	//		log.Printf("alloc  [%3x] %3x  (last %2x)%v", l.t0.root, off, last, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
