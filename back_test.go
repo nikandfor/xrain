@@ -26,8 +26,11 @@ func TestMemBack(t *testing.T) {
 	err = b.Sync()
 	assert.NoError(t, err)
 
-	b.Access(0x100, 0x10, func(p []byte) {
-		r := bytes.HasPrefix(p, []byte("PAGE2 content"))
+	b.Access2(0x0, 0x10, 0x100, 0x10, func(lp, rp []byte) {
+		r := bytes.HasPrefix(lp, []byte("PAGE1 content"))
+		assert.True(t, r)
+
+		r = bytes.HasPrefix(rp, []byte("PAGE2 content"))
 		assert.True(t, r)
 	})
 

@@ -7,6 +7,7 @@ const Mb = 1 << 30
 type (
 	Back interface {
 		Access(off, len int64, f func(p []byte))
+		Access2(off, len, off2, len2 int64, f func(p, p2 []byte))
 		Copy(roff, off, len int64) error
 		Size() int64
 		Truncate(size int64) error
@@ -30,6 +31,13 @@ func (b *MemBack) Access(off, l int64, f func(p []byte)) {
 	b.mu.RLock()
 
 	f(b.d[off : off+l])
+}
+
+func (b *MemBack) Access2(off, l, off2, l2 int64, f func(p, p2 []byte)) {
+	defer b.mu.RUnlock()
+	b.mu.RLock()
+
+	f(b.d[off:off+l], b.d[off2:off2+l2])
 }
 
 func (b *MemBack) Copy(roff, off, len int64) error {
