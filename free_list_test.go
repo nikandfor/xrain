@@ -1,3 +1,5 @@
+// +build ignore
+
 package xrain
 
 import (
@@ -21,22 +23,22 @@ func TestDumpFreeList(t *testing.T) {
 	b := NewMemBack(0 * Page)
 	fl := NewNoRewriteFreeList(Page, b)
 
-	off, err := fl.Alloc()
+	off, err := fl.Alloc(1)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(0), off)
 
-	off, err = fl.Alloc()
+	off, err = fl.Alloc(1)
 	assert.NoError(t, err)
 	assert.Equal(t, 1*int64(Page), off)
 
-	off, err = fl.Alloc()
+	off, err = fl.Alloc(1)
 	assert.NoError(t, err)
 	assert.Equal(t, 2*int64(Page), off)
 
-	err = fl.Reclaim(off, 0)
+	err = fl.Reclaim(1, off, 0)
 	assert.NoError(t, err)
 
-	off, err = fl.Alloc()
+	off, err = fl.Alloc(1)
 	assert.NoError(t, err)
 	assert.Equal(t, 3*int64(Page), off)
 }
@@ -53,7 +55,7 @@ func TestFreeListAuto(t *testing.T) {
 	)
 
 	b := NewMemBack(2 * Page)
-	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
+	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
@@ -69,12 +71,14 @@ func TestFreeListAuto(t *testing.T) {
 	var lastgrow int
 
 	alloc := func(ver int64) {
-		off, err := fl.Alloc()
+		off, err := fl.Alloc(1)
 		assert.NoError(t, err)
 
 		//	log.Printf("ver %3d alloc %x", ver, off)
 
-		pl.setver(b.Load(off, Page), ver)
+		b.Access(off, 0x10, func(p []byte) {
+			pl.setver(p, ver)
+		})
 
 		taken = append(taken, off)
 	}
@@ -83,11 +87,14 @@ func TestFreeListAuto(t *testing.T) {
 		off := taken[l]
 		taken = taken[:l]
 
-		ver := pl.getver(b.Load(off, Page))
+		var ver int64
+		b.Access(off, 0x10, func(p []byte) {
+			ver = pl.getver(p)
+		})
 
 		//	log.Printf("ver %3d free  %x", cv, off)
 
-		err := fl.Reclaim(off, ver)
+		err := fl.Reclaim(1, off, ver)
 		assert.NoError(t, err)
 	}
 	check := func(n int) bool {
@@ -171,21 +178,22 @@ func TestFreeListAuto(t *testing.T) {
 				assert.False(t, fl.lock)
 				assert.Empty(t, fl.deferred)
 
-				log.Printf("%d %d/%d ___ root %x %x  next %x taken %x\n%v", ii, j, i, fl.t0.root, fl.t1.root, fl.next, taken, dumpFile(pl))
+				//	log.Printf("%d %d/%d ___ root %x %x  next %x taken %x\n%v", ii, j, i, fl.t0.root, fl.t1.root, fl.next, taken, dumpFile(pl))
 
 				if check(len(taken)) {
 					return
 				}
 
-				log.Printf("out of %d pages: %d taken %d used %d free", fl.next/Page, len(taken), len(used), len(recl))
+				//	log.Printf("out of %d pages: %d taken %d used %d free", fl.next/Page, len(taken), len(used), len(recl))
 
 				{
 					cnt := 0
 					for off := int64(0); off < fl.next; off += Page {
-						p := b.Load(off, Page)
-						if pl.getver(p) == fl.ver {
-							cnt++
-						}
+						b.Access(off, 0x10, func(p []byte) {
+							if pl.getver(p) == fl.ver {
+								cnt++
+							}
+						})
 					}
 					if fl.next != nextwas {
 						if j > 1 {
@@ -227,7 +235,7 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	const Page = 0x100
 
 	b := NewMemBack(2 * Page)
-	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
+	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
@@ -238,12 +246,14 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	var taken []int64
 
 	alloc := func(ver int64) {
-		off, err := fl.Alloc()
+		off, err := fl.Alloc(1)
 		assert.NoError(t, err)
 
 		//	log.Printf("ver %3d alloc %x", ver, off)
 
-		pl.setver(b.Load(off, Page), ver)
+		b.Access(off, 0x10, func(p []byte) {
+			pl.setver(p, ver)
+		})
 
 		taken = append(taken, off)
 	}
@@ -252,11 +262,14 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 		off := taken[l]
 		taken = taken[:l]
 
-		ver := pl.getver(b.Load(off, Page))
+		var ver int64
+		b.Access(off, 0x10, func(p []byte) {
+			ver = pl.getver(p)
+		})
 
 		//	log.Printf("ver %3d free  %x", cv, off)
 
-		err := fl.Reclaim(off, ver)
+		err := fl.Reclaim(1, off, ver)
 		assert.NoError(t, err)
 	}
 
@@ -278,7 +291,7 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 	const Page = 0x100
 
 	b := NewMemBack(2 * Page)
-	pl := &IntLayout{BaseLayout: BaseLayout{b: b, page: Page}}
+	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
@@ -289,12 +302,14 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 	var taken []int64
 
 	alloc := func(ver int64) {
-		off, err := fl.Alloc()
+		off, err := fl.Alloc(1)
 		assert.NoError(t, err)
 
 		//	log.Printf("ver %3d alloc %x", ver, off)
 
-		pl.setver(b.Load(off, Page), ver)
+		b.Access(off, 0x10, func(p []byte) {
+			pl.setver(p, ver)
+		})
 
 		taken = append(taken, off)
 	}
@@ -303,11 +318,14 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 		off := taken[l]
 		taken = taken[:l]
 
-		ver := pl.getver(b.Load(off, Page))
+		var ver int64
+		b.Access(off, 0x10, func(p []byte) {
+			ver = pl.getver(p)
+		})
 
 		//	log.Printf("ver %3d free  %x", cv, off)
 
-		err := fl.Reclaim(off, ver)
+		err := fl.Reclaim(1, off, ver)
 		assert.NoError(t, err)
 	}
 

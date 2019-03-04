@@ -3,7 +3,6 @@ package xrain
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"path"
 	"runtime"
 	"strings"
@@ -40,7 +39,7 @@ type (
 
 func NewFreeList(t0, t1 *Tree, next, page int64, ver, keep int64, b Back) *FreeList {
 	if t0 == t1 {
-		assert_(t0 != t1, "must be 2 distinct trees")
+		assert0(t0 != t1, "must be 2 distinct trees")
 	}
 
 	if t0.Size() < t1.Size() {
@@ -63,7 +62,7 @@ func NewFreeList(t0, t1 *Tree, next, page int64, ver, keep int64, b Back) *FreeL
 	return l
 }
 
-func NewNoRewriteFreeList(page int64, b Back) *FreeList {
+func NewFreeListNoReclaim(page int64, b Back) *FreeList {
 	flen := b.Size()
 
 	l := &FreeList{
@@ -78,9 +77,6 @@ func NewNoRewriteFreeList(page int64, b Back) *FreeList {
 }
 
 func (l *FreeList) Alloc(n int) (off int64, err error) {
-	if n != 1 {
-		panic(n)
-	}
 	//	defer func(last []byte) {
 	//		log.Printf("alloc  [%3x] %3x  (last %2x)%v", l.t0.root, off, last, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
@@ -99,7 +95,7 @@ func (l *FreeList) Alloc(n int) (off int64, err error) {
 next:
 	next := l.t0.Next(l.last)
 
-	log.Printf("Alloc nxt %x <- %x   next %x", next, l.last, l.next)
+	//	log.Printf("Alloc nxt %x <- %x   next %x", next, l.last, l.next)
 	if next == nil {
 		l.exht = true
 		return l.allocGrow()
@@ -142,9 +138,6 @@ next:
 }
 
 func (l *FreeList) Reclaim(n int, off, ver int64) error {
-	if n != 1 {
-		panic(n)
-	}
 	//	defer func() {
 	//		log.Printf("reclaim[%3x] %3x %d%v", l.t1.root, off, ver, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))

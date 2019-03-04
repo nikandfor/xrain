@@ -29,6 +29,8 @@ type (
 		NeedRebalance(p int64) bool
 		Siblings(p int64, i int, pi int64) (li int, l, r int64)
 		Rebalance(l, r int64) (l_, r_ int64, _ error)
+
+		SetVer(ver int64)
 	}
 
 	BaseLayout struct { // isbranch bit, size uint15, extended uint24, _ [3]byte, ver int64
@@ -53,13 +55,24 @@ type (
 	}
 )
 
-func NewPageLayout(b Back, psize, ver int64, free *FreeList) BaseLayout {
-	return BaseLayout{
-		b:    b,
-		page: psize,
-		ver:  ver,
-		free: free,
+func NewFixedLayout(b Back, page, ver int64, k, v, pm int, fl *FreeList) *FixedLayout {
+	return &FixedLayout{
+		BaseLayout: BaseLayout{
+			b:    b,
+			page: page,
+			ver:  ver,
+			free: fl,
+		},
+		k:  k,
+		v:  v,
+		kv: k + v,
+		pm: pm,
+		p:  page * int64(pm),
 	}
+}
+
+func (l *BaseLayout) SetVer(ver int64) {
+	l.ver = ver
 }
 
 func (l *BaseLayout) NKeys(off int64) (r int) {
@@ -71,7 +84,7 @@ func (l *BaseLayout) NKeys(off int64) (r int) {
 
 func (l *BaseLayout) IsLeaf(off int64) (r bool) {
 	l.b.Access(off, 0x10, func(p []byte) {
-		r = p[0]&0x80 == 0
+		r = l.isleaf(p)
 	})
 	return
 }
@@ -118,6 +131,10 @@ func (l *BaseLayout) alloc(nold, nnew int, off, ver int64) (noff int64, err erro
 	return noff, nil
 }
 
+func (l *BaseLayout) isleaf(p []byte) bool {
+	return p[0]&0x80 == 0
+}
+
 func (l *BaseLayout) getver(p []byte) int64 {
 	return int64(p[8])<<56 | int64(p[9])<<48 | int64(p[10])<<40 | int64(p[11])<<32 | int64(p[12])<<24 | int64(p[13])<<16 | int64(p[14])<<8 | int64(p[15])
 }
@@ -153,13 +170,13 @@ func (l *BaseLayout) setextended(p []byte, n int) {
 	p[4] = byte(n)
 }
 
-func (l *FixedLayout) alloc(off, ver int64) (_ int64, err error) {
-	return l.BaseLayout.alloc(l.pm, l.pm, off, ver)
-}
-
 func (l *FixedLayout) setheader(p []byte) {
 	l.setver(p, l.ver)
 	l.setextended(p, l.pm)
+}
+
+func (l *FixedLayout) alloc(off, ver int64) (_ int64, err error) {
+	return l.BaseLayout.alloc(l.pm, l.pm, off, ver)
 }
 
 func (l *FixedLayout) AllocRoot() (int64, error) {
@@ -179,13 +196,10 @@ func (l *FixedLayout) KeyCmp(off int64, i int, k []byte) (r int) {
 	if k == nil {
 		return 1
 	}
-	if len(k) != l.k {
-		panic(len(k))
-	}
 
 	l.b.Access(off, l.p, func(p []byte) {
 		v := l.v
-		if p[0]&0x80 != 0 {
+		if !l.isleaf(p) {
 			v = 8
 		}
 		s := 16 + i*(l.k+v)
@@ -202,7 +216,7 @@ func (l *FixedLayout) Key(off int64, i int) (r []byte) {
 
 	l.b.Access(off, l.p, func(p []byte) {
 		v := l.v
-		if p[0]&0x80 != 0 {
+		if !l.isleaf(p) {
 			v = 8
 		}
 		s := 16 + i*(l.k+v)
@@ -224,7 +238,7 @@ func (l *FixedLayout) LastKey(off int64) (r []byte) {
 
 	l.b.Access(off, l.p, func(p []byte) {
 		v := l.v
-		if p[0]&0x80 != 0 {
+		if !l.isleaf(p) {
 			v = 8
 		}
 		i := l.nkeys(p) - 1
@@ -251,7 +265,7 @@ func (l *FixedLayout) Value(off int64, i int) (r []byte) {
 
 	l.b.Access(off, l.p, func(p []byte) {
 		v := l.v
-		if p[0]&0x80 != 0 {
+		if !l.isleaf(p) {
 			v = 8
 		}
 		s := 16 + i*(l.k+v) + l.k
@@ -269,7 +283,7 @@ func (l *FixedLayout) Value(off int64, i int) (r []byte) {
 func (l *FixedLayout) Int64(off int64, i int) (r int64) {
 	l.b.Access(off, l.p, func(p []byte) {
 		v := 8
-		if p[0]&0x80 == 0 {
+		if l.isleaf(p) {
 			v = l.v
 			if v < 8 {
 				panic(l.v)
@@ -300,7 +314,7 @@ again:
 		}
 
 		kv := l.kv
-		if p[0]&0x80 != 0 {
+		if !l.isleaf(p) {
 			kv = l.k + 8
 		}
 
@@ -323,12 +337,14 @@ again:
 }
 
 func (l *FixedLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err error) {
+	loff = off
 	var ver int64
 	var alloc, split bool
 again:
-	l.b.Access(off, l.p, func(p []byte) {
+	l.b.Access(loff, l.p, func(p []byte) {
 		if alloc {
 			l.setheader(p)
+			ver = l.ver
 			alloc = false
 		} else {
 			ver = l.getver(p)
@@ -336,7 +352,7 @@ again:
 		}
 
 		kv := l.kv
-		if p[0]&0x80 != 0 {
+		if !l.isleaf(p) {
 			kv = l.k + 8
 		}
 		n := l.nkeys(p)
@@ -351,22 +367,16 @@ again:
 		}
 	})
 	if !alloc && !split {
-		return off, NilPage, nil
+		return loff, NilPage, nil
+	}
+	if alloc {
+		loff, err = l.alloc(loff, ver)
+		if err != nil {
+			return
+		}
 	}
 	if !split {
-		off, err = l.alloc(off, ver)
-		if err != nil {
-			return
-		}
 		goto again
-	}
-
-	loff = off
-	if alloc {
-		loff, err = l.alloc(off, ver)
-		if err != nil {
-			return
-		}
 	}
 
 	roff, err = l.alloc(NilPage, 0)
@@ -380,7 +390,7 @@ again:
 		l.setheader(rp)
 
 		kv := l.kv
-		if lp[0]&0x80 != 0 {
+		if !l.isleaf(lp) {
 			kv = l.k + 8
 		}
 
@@ -438,7 +448,7 @@ func (l *FixedLayout) Siblings(off int64, i int, poff int64) (li int, loff, roff
 			roff = l.Int64(off, i+1)
 		} else {
 			li = i - 1
-			loff = l.Int64(off, i)
+			loff = l.Int64(off, i-1)
 			roff = poff
 		}
 	})
@@ -452,7 +462,7 @@ func (l *FixedLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error
 again:
 	l.b.Access2(loff, l.p, roff, l.p, func(lp, rp []byte) {
 		kv := l.kv
-		if lp[0]&0x80 != 0 {
+		if !l.isleaf(lp) {
 			kv = l.k + 8
 		}
 

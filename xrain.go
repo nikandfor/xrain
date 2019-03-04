@@ -1,8 +1,7 @@
 package xrain
 
 import (
-	"encoding/binary"
-	"errors"
+	"bytes"
 	"fmt"
 	"log"
 )
@@ -51,6 +50,8 @@ type (
 	}
 )
 
+/*
+
 func NewDB(b Back, c *Config) (*DB, error) {
 	d := &DB{
 		b: b,
@@ -84,7 +85,7 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	ver := d.ver
 	rp := &d.root[ver%2]
 
-	kvl := &KVLayout{BaseLayout: BaseLayout{
+	kvl := &FixedLayout{BaseLayout: BaseLayout{
 		b:    d.b,
 		page: d.page,
 		ver:  ver,
@@ -278,8 +279,46 @@ again:
 		}
 	}
 }
+*/
 
-func assert_(c bool, f string, args ...interface{}) {
+//
+func checkPage(l PageLayout, off int64) {
+	n := l.NKeys(off)
+	var prev []byte
+	for i := 0; i < n; i++ {
+		k := l.Key(off, i)
+		if bytes.Compare(prev, k) != -1 {
+			log.Fatalf("at page %x of size %d  %2x goes before %2x", off, n, prev, k)
+		}
+		prev = k
+	}
+}
+
+func checkFile(l PageLayout) {
+	var b Back
+	var page int64
+	switch l := l.(type) {
+	//	case LogLayout:
+	//		checkFile(l.PageLayout)
+	//		return
+	//	case *KVLayout:
+	//		b = l.b
+	//		page = l.page
+	case *FixedLayout:
+		b = l.b
+		page = l.p
+	default:
+		panic(fmt.Sprintf("layout type %T", l))
+	}
+
+	b.Sync()
+	sz := b.Size()
+	for off := int64(0); off < sz; off += page {
+		checkPage(l, off)
+	}
+}
+
+func assert0(c bool, f string, args ...interface{}) {
 	if c {
 		return
 	}
