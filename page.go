@@ -55,7 +55,7 @@ type (
 	}
 )
 
-func NewFixedLayout(b Back, page, ver int64, k, v, pm int, fl *FreeList) *FixedLayout {
+func NewFixedLayout(b Back, page, ver int64, fl *FreeList) *FixedLayout {
 	return &FixedLayout{
 		BaseLayout: BaseLayout{
 			b:    b,
@@ -63,11 +63,11 @@ func NewFixedLayout(b Back, page, ver int64, k, v, pm int, fl *FreeList) *FixedL
 			ver:  ver,
 			free: fl,
 		},
-		k:  k,
-		v:  v,
-		kv: k + v,
-		pm: pm,
-		p:  page * int64(pm),
+		k:  8,
+		v:  8,
+		kv: 16,
+		pm: 1,
+		p:  page,
 	}
 }
 
@@ -168,6 +168,14 @@ func (l *BaseLayout) setextended(p []byte, n int) {
 	p[2] = byte(n >> 16)
 	p[3] = byte(n >> 8)
 	p[4] = byte(n)
+}
+
+func (l *FixedLayout) SetKVSize(k, v, pm int) {
+	l.k = k
+	l.v = v
+	l.kv = k + v
+	l.pm = pm
+	l.p = l.page * int64(pm)
 }
 
 func (l *FixedLayout) setheader(p []byte) {
@@ -466,12 +474,6 @@ again:
 			kv = l.k + 8
 		}
 
-		ln := l.nkeys(lp)
-		rn := l.nkeys(rp)
-		sum := ln + rn
-		rend := 16 + rn*kv
-		lend := 16 + ln*kv
-
 		if lalloc {
 			l.setheader(lp)
 			lalloc = false
@@ -491,6 +493,12 @@ again:
 				ralloc = true
 			}
 		}
+
+		ln := l.nkeys(lp)
+		rn := l.nkeys(rp)
+		sum := ln + rn
+		rend := 16 + rn*kv
+		lend := 16 + ln*kv
 
 		if 16+sum*kv <= len(lp) {
 			ralloc = false

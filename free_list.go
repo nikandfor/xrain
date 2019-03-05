@@ -37,7 +37,7 @@ type (
 	}
 )
 
-func NewFreeList(t0, t1 *Tree, next, page int64, ver, keep int64, b Back) *FreeList {
+func NewFreeList(b Back, t0, t1 *Tree, next, page int64, ver, keep int64) *FreeList {
 	if t0 == t1 {
 		assert0(t0 != t1, "must be 2 distinct trees")
 	}
@@ -62,7 +62,7 @@ func NewFreeList(t0, t1 *Tree, next, page int64, ver, keep int64, b Back) *FreeL
 	return l
 }
 
-func NewFreeListNoReclaim(page int64, b Back) *FreeList {
+func NewFreeListNoReclaim(b Back, page int64) *FreeList {
 	flen := b.Size()
 
 	l := &FreeList{

@@ -13,7 +13,7 @@ func TestPageFixedIsLeaf(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	b.Access2(0, 0x10, Page, 0x10, func(l, r []byte) {
 		l[0] = 0x00
@@ -28,7 +28,8 @@ func TestPageFixedAllocRoot(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 3, 8, 8, 2, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 3, NewFreeListNoReclaim(b, Page))
+	pl.SetKVSize(8, 8, 2)
 
 	off, err := pl.AllocRoot()
 	assert.NoError(t, err)
@@ -44,7 +45,7 @@ func TestPageFixedPutOnePage8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	testPagePutOnePage8(t, pl)
 }
@@ -53,7 +54,7 @@ func TestPageFixedPutOnePageAlloc8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 1, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 1, NewFreeListNoReclaim(b, Page))
 
 	testPagePutOnePage8(t, pl)
 
@@ -66,7 +67,8 @@ func TestPageFixedPutSplit8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 0x10, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl.SetKVSize(8, 0x10, 1)
 
 	testPagePutSplit8(t, pl)
 }
@@ -75,7 +77,8 @@ func TestPageFixedPutSplitAlloc8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 1, 8, 0x10, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 1, NewFreeListNoReclaim(b, Page))
+	pl.SetKVSize(8, 0x10, 1)
 
 	testPagePutSplit8(t, pl)
 }
@@ -84,7 +87,7 @@ func TestPageFixedKeyCmpLast8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	testPageKeyCmpLast8(t, pl)
 }
@@ -93,7 +96,7 @@ func TestPageFixedPutInt648(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	testPagePutInt648(t, pl)
 }
@@ -102,7 +105,7 @@ func TestPageFixedPutDelOnePage8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	off := testPagePutOnePage8(t, pl)
 	testPageDelOnePage8(t, off, pl)
@@ -112,7 +115,7 @@ func TestPageFixedPutDelOnePageAlloc8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	off := testPagePutOnePage8(t, pl)
 
@@ -125,7 +128,7 @@ func TestPageFixedNeedRebalance8(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	off := int64(0)
 
@@ -143,7 +146,7 @@ func TestPageFixedSiblings8(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	off := int64(0)
 
@@ -171,7 +174,7 @@ func TestPageFixedRebalance8(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	testPageRebalance8(t, pl, 1, 3, pl.free, false)
 
@@ -184,7 +187,7 @@ func TestPageFixedReclaim(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, NewFreeListNoReclaim(Page, b))
+	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
 
 	off, err := pl.AllocRoot()
 	assert.NoError(t, err)
