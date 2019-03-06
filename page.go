@@ -37,7 +37,7 @@ type (
 		b    Back
 		page int64
 		ver  int64
-		free *FreeList
+		free FreeList
 
 		//	meta *treemeta
 
@@ -55,7 +55,7 @@ type (
 	}
 )
 
-func NewFixedLayout(b Back, page, ver int64, fl *FreeList) *FixedLayout {
+func NewFixedLayout(b Back, page, ver int64, fl FreeList) *FixedLayout {
 	return &FixedLayout{
 		BaseLayout: BaseLayout{
 			b:    b,
@@ -466,6 +466,7 @@ func (l *FixedLayout) Siblings(off int64, i int, poff int64) (li int, loff, roff
 func (l *FixedLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error) {
 	loff, roff = lpoff, rpoff
 	var lalloc, ralloc bool
+	var rfree bool
 	var lver, rver int64
 again:
 	l.b.Access2(loff, l.p, roff, l.p, func(lp, rp []byte) {
@@ -476,6 +477,7 @@ again:
 
 		if lalloc {
 			l.setheader(lp)
+			lver = l.ver
 			lalloc = false
 		} else {
 			lver = l.getver(lp)
@@ -486,6 +488,7 @@ again:
 
 		if ralloc {
 			l.setheader(rp)
+			rver = l.ver
 			ralloc = false
 		} else {
 			rver = l.getver(rp)
@@ -520,7 +523,7 @@ again:
 			copy(lp[lend:], rp[16:rend])
 			l.setsize(lp, sum)
 
-			roff = NilPage
+			rfree = true
 			return
 		}
 
@@ -555,6 +558,14 @@ again:
 	}
 	if lalloc || ralloc {
 		goto again
+	}
+
+	if rfree {
+		err = l.free.Reclaim(l.pm, roff, rver)
+		if err != nil {
+			return
+		}
+		roff = NilPage
 	}
 
 	return

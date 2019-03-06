@@ -17,7 +17,13 @@ const (
 )
 
 type (
-	FreeList struct {
+	FreeList interface {
+		Alloc(n int) (int64, error)
+		Reclaim(n int, off, ver int64) error
+		SetVer(ver, keep int64)
+	}
+
+	TreeFreeList struct {
 		ver, keep int64
 		b         Back
 		t0, t1    *Tree // get, put
@@ -37,35 +43,31 @@ type (
 	}
 )
 
-func NewFreeList(b Back, t0, t1 *Tree, next, page int64, ver, keep int64) *FreeList {
+func NewTreeFreeList(b Back, t0, t1 *Tree, next, page int64, ver, keep int64) *TreeFreeList {
 	if t0 == t1 {
 		assert0(t0 != t1, "must be 2 distinct trees")
 	}
 
-	if t0.Size() < t1.Size() {
-		t0, t1 = t1, t0
-	}
-
 	flen := b.Size()
 
-	l := &FreeList{
+	l := &TreeFreeList{
 		t0:   t0,
 		t1:   t1,
-		ver:  ver,
-		keep: keep,
 		b:    b,
 		page: page,
 		next: next,
 		flen: flen,
 	}
 
+	l.SetVer(ver, keep)
+
 	return l
 }
 
-func NewFreeListNoReclaim(b Back, page int64) *FreeList {
+func NewTreeFreeListNoReclaim(b Back, page int64) *TreeFreeList {
 	flen := b.Size()
 
-	l := &FreeList{
+	l := &TreeFreeList{
 		b:    b,
 		page: page,
 		next: flen,
@@ -76,17 +78,29 @@ func NewFreeListNoReclaim(b Back, page int64) *FreeList {
 	return l
 }
 
-func (l *FreeList) Alloc(n int) (off int64, err error) {
+func (l *TreeFreeList) SetVer(ver, keep int64) {
+	l.ver = ver
+	l.keep = keep
+	l.exht = l.t0 == nil
+	l.last = nil
+
+	if l.t0 != nil && l.t1 != nil && l.t0.Size() < l.t1.Size() {
+		l.t0, l.t1 = l.t1, l.t0
+	}
+}
+
+func (l *TreeFreeList) Alloc(n int) (off int64, err error) {
 	//	defer func(last []byte) {
 	//		log.Printf("alloc  [%3x] %3x  (last %2x)%v", l.t0.root, off, last, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
 	//	}(l.last)
-	/*
-		log.Printf("alloc in:  root %x last %2x next %x", l.t.root, l.last, l.next)
-		defer func() {
-			log.Printf("alloc out: root %x last %2x next %x -> %x", l.t.root, l.last, l.next, off)
-		}()
-	*/
+
+	//	log.Printf("alloc in:  root %x last %2x next %x", l.t0.root, l.last, l.next)
+	//	defer func() {
+	//		log.Printf("alloc out: root %x last %2x next %x -> %x", l.t0.root, l.last, l.next, off)
+	//	}()
+
+	//	log.Printf("FreeList: %+v", l)
 
 	if l.exht {
 		return l.allocGrow()
@@ -137,7 +151,7 @@ next:
 	return off, nil
 }
 
-func (l *FreeList) Reclaim(n int, off, ver int64) error {
+func (l *TreeFreeList) Reclaim(n int, off, ver int64) error {
 	//	defer func() {
 	//		log.Printf("reclaim[%3x] %3x %d%v", l.t1.root, off, ver, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
@@ -165,7 +179,7 @@ func (l *FreeList) Reclaim(n int, off, ver int64) error {
 	return l.unlock()
 }
 
-func (l *FreeList) allocGrow() (int64, error) {
+func (l *TreeFreeList) allocGrow() (int64, error) {
 	off := l.next
 	if err := l.growFile(off + l.page); err != nil {
 		return 0, err
@@ -175,7 +189,7 @@ func (l *FreeList) allocGrow() (int64, error) {
 	return off, nil
 }
 
-func (l *FreeList) growFile(sz int64) error {
+func (l *TreeFreeList) growFile(sz int64) error {
 	if sz <= l.flen {
 		return nil
 	}
@@ -204,7 +218,7 @@ func (l *FreeList) growFile(sz int64) error {
 	return nil
 }
 
-func (l *FreeList) unlock() (err error) {
+func (l *TreeFreeList) unlock() (err error) {
 	//	log.Printf("unlock: root %x %x  %x\n%v%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p), callers(0))
 
 	for i := 0; i < len(l.deferred); i++ {

@@ -2,8 +2,11 @@ package xrain
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 )
 
 var (
@@ -49,8 +52,6 @@ type (
 		datasize int64
 	}
 )
-
-/*
 
 func NewDB(b Back, c *Config) (*DB, error) {
 	d := &DB{
@@ -106,6 +107,7 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	return nil
 }
 
+/*
 func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	ver := d.ver + 1
 	rp := &d.root[ver%2]
@@ -165,38 +167,39 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 
 	return d.b.Sync()
 }
+*/
 
 func (d *DB) writeRoot() {
 	n := d.ver % 2
 	rp := &d.root[d.ver%2]
 
-	p := d.b.Load(n*d.page, d.page)
-
-	s := 0x10
-	binary.BigEndian.PutUint64(p[s:], uint64(d.page))
-	s += 0x8
-	binary.BigEndian.PutUint64(p[s:], uint64(d.ver))
-	s += 0x8
-	binary.BigEndian.PutUint64(p[s:], uint64(rp.next))
-	s += 0x8
-	binary.BigEndian.PutUint64(p[s:], uint64(rp.data))
-	s += 0x8
-	binary.BigEndian.PutUint64(p[s:], uint64(rp.free0))
-	s += 0x8
-	binary.BigEndian.PutUint64(p[s:], uint64(rp.free1))
-	s += 0x8
-
-	for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
-		binary.BigEndian.PutUint64(p[s:], uint64(m.n))
+	d.b.Access(n*d.page, d.page, func(p []byte) {
+		s := 0x10
+		binary.BigEndian.PutUint64(p[s:], uint64(d.page))
 		s += 0x8
-		p[s] = byte(m.depth)
-		binary.BigEndian.PutUint32(p[s+4:], uint32(m.pages))
+		binary.BigEndian.PutUint64(p[s:], uint64(d.ver))
 		s += 0x8
-		binary.BigEndian.PutUint64(p[s:], uint64(m.datasize))
+		binary.BigEndian.PutUint64(p[s:], uint64(rp.next))
 		s += 0x8
-	}
+		binary.BigEndian.PutUint64(p[s:], uint64(rp.data))
+		s += 0x8
+		binary.BigEndian.PutUint64(p[s:], uint64(rp.free0))
+		s += 0x8
+		binary.BigEndian.PutUint64(p[s:], uint64(rp.free1))
+		s += 0x8
 
-	log.Printf("s %x", s)
+		for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
+			binary.BigEndian.PutUint64(p[s:], uint64(m.n))
+			s += 0x8
+			p[s] = byte(m.depth)
+			binary.BigEndian.PutUint32(p[s+4:], uint32(m.pages))
+			s += 0x8
+			binary.BigEndian.PutUint64(p[s:], uint64(m.datasize))
+			s += 0x8
+		}
+
+		log.Printf("s %x", s)
+	})
 }
 
 func (d *DB) initEmpty() (err error) {
@@ -209,28 +212,28 @@ func (d *DB) initEmpty() (err error) {
 		return
 	}
 
-	p := d.b.Load(0, 2*d.page)
-
 	h0 := fmt.Sprintf("xrain000%7x\n", d.page)
 	if len(h0) != 16 {
 		panic(len(h0))
 	}
 
-	copy(p, h0)
-	copy(p[d.page:], h0)
+	d.b.Access(0, 2*d.page, func(p []byte) {
+		copy(p, h0)
+		copy(p[d.page:], h0)
 
-	for i := 0; i < 2; i++ {
-		rp := &d.root[i]
-		rp.data = 2 * d.page
-		rp.free0 = 3 * d.page
-		rp.free1 = 4 * d.page
-		rp.next = 5 * d.page
+		for i := 0; i < 2; i++ {
+			rp := &d.root[i]
+			rp.data = 2 * d.page
+			rp.free0 = 3 * d.page
+			rp.free1 = 4 * d.page
+			rp.next = 5 * d.page
 
-		for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
-			m.depth = 1
-			m.pages = 1
+			for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
+				m.depth = 1
+				m.pages = 1
+			}
 		}
-	}
+	})
 
 	d.writeRoot()
 
@@ -243,43 +246,47 @@ func (d *DB) initExisting() {
 	}
 
 again:
-	p := d.b.Load(0, 2*d.page)
+	retry := false
+	d.b.Access(0, 2*d.page, func(p []byte) {
+		page := int64(binary.BigEndian.Uint64(p[0x10:]))
+		if page != d.page {
+			d.page = page
+			retry = true
+			return
+		}
 
-	page := int64(binary.BigEndian.Uint64(p[0x10:]))
-	if page != d.page {
-		d.page = page
+		for _, off := range []int64{0, d.page} {
+			s := off + 0x10 + 0x8 // header + page
+			ver := int64(binary.BigEndian.Uint64(p[s:]))
+			s += 0x8
+			if ver > d.ver {
+				d.ver = ver
+			}
+			rp := &d.root[off/d.page]
+			rp.next = int64(binary.BigEndian.Uint64(p[s:]))
+			s += 0x8
+			rp.data = int64(binary.BigEndian.Uint64(p[s:]))
+			s += 0x8
+			rp.free0 = int64(binary.BigEndian.Uint64(p[s:]))
+			s += 0x8
+			rp.free1 = int64(binary.BigEndian.Uint64(p[s:]))
+			s += 0x8
+
+			for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
+				m.n = int64(binary.BigEndian.Uint64(p[s:]))
+				s += 0x8
+				m.depth = p[s]
+				m.pages = int32(binary.BigEndian.Uint32(p[s+4:]))
+				s += 0x8
+				m.datasize = int64(binary.BigEndian.Uint64(p[s:]))
+				s += 0x8
+			}
+		}
+	})
+	if retry {
 		goto again
 	}
-
-	for _, off := range []int64{0, d.page} {
-		s := off + 0x10 + 0x8 // header + page
-		ver := int64(binary.BigEndian.Uint64(p[s:]))
-		s += 0x8
-		if ver > d.ver {
-			d.ver = ver
-		}
-		rp := &d.root[off/d.page]
-		rp.next = int64(binary.BigEndian.Uint64(p[s:]))
-		s += 0x8
-		rp.data = int64(binary.BigEndian.Uint64(p[s:]))
-		s += 0x8
-		rp.free0 = int64(binary.BigEndian.Uint64(p[s:]))
-		s += 0x8
-		rp.free1 = int64(binary.BigEndian.Uint64(p[s:]))
-		s += 0x8
-
-		for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
-			m.n = int64(binary.BigEndian.Uint64(p[s:]))
-			s += 0x8
-			m.depth = p[s]
-			m.pages = int32(binary.BigEndian.Uint32(p[s+4:]))
-			s += 0x8
-			m.datasize = int64(binary.BigEndian.Uint64(p[s:]))
-			s += 0x8
-		}
-	}
 }
-*/
 
 //
 func checkPage(l PageLayout, off int64) {
@@ -316,6 +323,91 @@ func checkFile(l PageLayout) {
 	for off := int64(0); off < sz; off += page {
 		checkPage(l, off)
 	}
+}
+
+func dumpPage(l PageLayout, off int64) string {
+	var b Back
+	var base *BaseLayout
+	var kvl *KVLayout
+	var fl *FixedLayout
+	var page int64
+	switch l := l.(type) {
+	//	case *KVLayout:
+	//		b = l.b
+	//		base = &l.BaseLayout
+	//		kvl = l
+	//		page = l.page
+	case *FixedLayout:
+		b = l.b
+		base = &l.BaseLayout
+		fl = l
+		page = l.page
+	default:
+		panic(fmt.Sprintf("layout type %T", l))
+	}
+
+	var buf bytes.Buffer
+
+	b.Access(off, page, func(p []byte) {
+		tp := 'B'
+		if l.IsLeaf(off) {
+			tp = 'D'
+		}
+		ver := base.getver(p)
+		n := l.NKeys(off)
+		fmt.Fprintf(&buf, "%4x: %c ver %3d  nkeys %4d  ", off, tp, ver, n)
+		if kvl != nil {
+			//	fmt.Fprintf(&buf, "datasize %3x free space %3x\n", kvl.datasize(p), len(p)-kvl.datasize(p)-16)
+		} else {
+			fmt.Fprintf(&buf, "datasize %3x free space %3x\n", n*16, len(p)-n*16-16)
+		}
+		if fl != nil {
+			for i := 0; i < n; i++ {
+				k := l.Key(off, i)
+				v := l.Int64(off, i)
+				fmt.Fprintf(&buf, "    %2x -> %4x\n", k, v)
+			}
+		} else {
+			if l.IsLeaf(off) {
+				for i := 0; i < n; i++ {
+					k := l.Key(off, i)
+					v := l.Value(off, i)
+					fmt.Fprintf(&buf, "    %q -> %q\n", k, v)
+				}
+			} else {
+				for i := 0; i < n; i++ {
+					k := l.Key(off, i)
+					v := l.Int64(off, i)
+					fmt.Fprintf(&buf, "    %4x <- % 2x (%q)\n", v, k, k)
+				}
+			}
+		}
+	})
+
+	return buf.String()
+}
+
+func dumpFile(l PageLayout) string {
+	var b Back
+	var page int64
+	switch l := l.(type) {
+	//	case *KVLayout:
+	//		b = l.b
+	//		page = l.page
+	case *FixedLayout:
+		b = l.b
+		page = l.page
+	default:
+		panic(fmt.Sprintf("layout type %T", l))
+	}
+
+	var buf strings.Builder
+	b.Sync()
+	sz := b.Size()
+	for off := int64(0); off < sz; off += page {
+		buf.WriteString(dumpPage(l, off))
+	}
+	return buf.String()
 }
 
 func assert0(c bool, f string, args ...interface{}) {

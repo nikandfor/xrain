@@ -16,7 +16,7 @@ type (
 
 		meta *treemeta
 
-		//	dd map[string]string
+		dd map[string]string
 	}
 
 	keylink int64
@@ -34,12 +34,12 @@ func NewTree(p PageLayout, root, page int64) *Tree {
 		mask: mask,
 	}
 
-	//	if checkTree != nil {
-	//		t.dd = make(map[string]string)
-	//		for k := t.Next(nil); k != nil; k = t.Next(k) {
-	//			t.dd[string(k)] = string(t.Get(k))
-	//		}
-	//	}
+	if checkTree != nil {
+		t.dd = make(map[string]string)
+		for k := t.Next(nil); k != nil; k = t.Next(k) {
+			t.dd[string(k)] = string(t.Get(k))
+		}
+	}
 
 	return t
 }
@@ -72,9 +72,9 @@ func (t *Tree) Put(k, v []byte) (err error) {
 		return err
 	}
 
-	//	if debugChecks {
-	//		t.dd[string(k)] = string(v)
-	//	}
+	if checkTree != nil {
+		t.dd[string(k)] = string(v)
+	}
 
 	if t.meta != nil && !eq {
 		t.meta.n++
@@ -101,9 +101,9 @@ func (t *Tree) Del(k []byte) (err error) {
 		return err
 	}
 
-	//	if debugChecks {
-	//		delete(t.dd, string(k))
-	//	}
+	if checkTree != nil {
+		delete(t.dd, string(k))
+	}
 
 	if t.meta != nil {
 		t.meta.n--
@@ -390,22 +390,20 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 	//	log.Printf("root   %4x <- %4x%v\n%v", l, t.root, callers(-1), dumpFile(t.p))
 	t.root = l
 
-	/*
-		if debugChecks {
-			//	checkTree(t)
+	if checkTree != nil {
+		checkTree(t)
 
-			cnt := 0
-			for k := t.Next(nil); k != nil; k = t.Next(k) {
-				cnt++
-				if v, ok := t.dd[string(k)]; !ok || v != string(t.Get(k)) {
-					log.Fatalf("data mismatch: %x -> %x != %x (%v)", k, t.Get(k), []byte(v), ok)
-				}
-			}
-			if cnt != len(t.dd) {
-				log.Fatalf("data mismatch: expected %d keys, have %d", len(t.dd), cnt)
+		cnt := 0
+		for k := t.Next(nil); k != nil; k = t.Next(k) {
+			cnt++
+			if v, ok := t.dd[string(k)]; !ok || v != string(t.Get(k)) {
+				log.Fatalf("data mismatch: %x -> %x != %x (%v)", k, t.Get(k), []byte(v), ok)
 			}
 		}
-	*/
+		if cnt != len(t.dd) {
+			log.Fatalf("data mismatch: expected %d keys, have %d", len(t.dd), cnt)
+		}
+	}
 
 	return nil
 }

@@ -13,7 +13,7 @@ func TestPageFixedIsLeaf(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	b.Access2(0, 0x10, Page, 0x10, func(l, r []byte) {
 		l[0] = 0x00
@@ -28,7 +28,7 @@ func TestPageFixedAllocRoot(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 3, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 3, NewTreeFreeListNoReclaim(b, Page))
 	pl.SetKVSize(8, 8, 2)
 
 	off, err := pl.AllocRoot()
@@ -45,7 +45,7 @@ func TestPageFixedPutOnePage8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	testPagePutOnePage8(t, pl)
 }
@@ -54,7 +54,7 @@ func TestPageFixedPutOnePageAlloc8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 1, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 1, NewTreeFreeListNoReclaim(b, Page))
 
 	testPagePutOnePage8(t, pl)
 
@@ -67,7 +67,7 @@ func TestPageFixedPutSplit8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 	pl.SetKVSize(8, 0x10, 1)
 
 	testPagePutSplit8(t, pl)
@@ -77,7 +77,7 @@ func TestPageFixedPutSplitAlloc8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 1, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 1, NewTreeFreeListNoReclaim(b, Page))
 	pl.SetKVSize(8, 0x10, 1)
 
 	testPagePutSplit8(t, pl)
@@ -87,7 +87,7 @@ func TestPageFixedKeyCmpLast8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	testPageKeyCmpLast8(t, pl)
 }
@@ -96,7 +96,7 @@ func TestPageFixedPutInt648(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	testPagePutInt648(t, pl)
 }
@@ -105,7 +105,7 @@ func TestPageFixedPutDelOnePage8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	off := testPagePutOnePage8(t, pl)
 	testPageDelOnePage8(t, off, pl)
@@ -115,7 +115,7 @@ func TestPageFixedPutDelOnePageAlloc8(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	off := testPagePutOnePage8(t, pl)
 
@@ -128,7 +128,7 @@ func TestPageFixedNeedRebalance8(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	off := int64(0)
 
@@ -146,7 +146,7 @@ func TestPageFixedSiblings8(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	off := int64(0)
 
@@ -174,20 +174,22 @@ func TestPageFixedRebalance8(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
-	testPageRebalance8(t, pl, 1, 3, pl.free, false)
+	var ver int64
 
-	testPageRebalance8(t, pl, 2, 6, pl.free, true)
+	testPageRebalance8(t, pl, 1, 3, b, pl.free, &ver, false)
 
-	testPageRebalance8(t, pl, 6, 2, pl.free, true)
+	testPageRebalance8(t, pl, 2, 6, b, pl.free, &ver, true)
+
+	testPageRebalance8(t, pl, 6, 2, b, pl.free, &ver, true)
 }
 
 func TestPageFixedReclaim(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, NewFreeListNoReclaim(b, Page))
+	pl := NewFixedLayout(b, Page, 0, NewTreeFreeListNoReclaim(b, Page))
 
 	off, err := pl.AllocRoot()
 	assert.NoError(t, err)
@@ -337,17 +339,17 @@ func testPageDelOnePage8(t *testing.T, loff int64, pl PageLayout) {
 	assert.Equal(t, 0, pl.NKeys(loff))
 }
 
-func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, fl *FreeList, alloc bool) {
+func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl FreeList, ver *int64, alloc bool) {
 	loff, err := fl.Alloc(1)
 	assert.NoError(t, err)
 
 	roff, err := fl.Alloc(1)
 	assert.NoError(t, err)
 
-	fl.b.Access2(loff, 0x10, roff, 0x10, func(l, r []byte) {
+	b.Access2(loff, 0x10, roff, 0x10, func(l, r []byte) {
 		pl := &BaseLayout{}
-		pl.setver(l, fl.ver)
-		pl.setver(r, fl.ver)
+		pl.setver(l, *ver)
+		pl.setver(r, *ver)
 	})
 
 	v := int64(0)
@@ -369,7 +371,6 @@ func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, fl *FreeList, a
 				return
 			}
 			if !assert.Equal(t, tc.off, off) {
-				b := fl.b.(*MemBack)
 				log.Printf("dump old\n%v\n%v", hex.Dump(b.d[tc.off:tc.off+0x80]), hex.Dump(b.d[off:off+0x80]))
 				return
 			}
@@ -377,8 +378,9 @@ func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, fl *FreeList, a
 	}
 
 	if alloc {
-		fl.ver++
-		pl.SetVer(fl.ver)
+		(*ver)++
+		pl.SetVer(*ver)
+		fl.SetVer(*ver, *ver-1)
 	}
 
 	l, r, err := pl.Rebalance(loff, roff)

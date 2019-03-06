@@ -1,5 +1,3 @@
-// +build ignore
-
 package xrain
 
 import (
@@ -21,7 +19,7 @@ func TestDumpFreeList(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0 * Page)
-	fl := NewNoRewriteFreeList(Page, b)
+	fl := NewTreeFreeListNoReclaim(b, Page)
 
 	off, err := fl.Alloc(1)
 	assert.NoError(t, err)
@@ -45,24 +43,27 @@ func TestDumpFreeList(t *testing.T) {
 
 func TestFreeListAuto(t *testing.T) {
 	defer func() {
-		debugChecks = false
+		checkTree = nil
 	}()
-	debugChecks = true
+	checkTree = func(t *Tree) {
+		//	log.Printf("tree checked")
+	}
 
 	const (
-		Page = 0x100
-		N    = 40
+		Page = 0x80
+		N    = 50
+		M    = 5
 	)
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, nil)
+	pl := NewFixedLayout(b, Page, 0, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 	f0.meta = &treemeta{}
 	f1.meta = &treemeta{}
 
-	fl := NewFreeList(f0, f1, 2*Page, Page, 0, -1, b)
+	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, 0, -1)
 	pl.free = fl
 
 	var taken []int64
@@ -132,7 +133,7 @@ func TestFreeListAuto(t *testing.T) {
 			}
 		}
 		if len(recl)+len(used)+n != int(fl.next/Page) {
-			t.Errorf("%d pages in file, but %d + %d used and %d free", fl.next/Page, n, len(used), len(recl))
+			t.Errorf("%d pages in file, but %d taken, %d used and %d free", fl.next/Page, n, len(used), len(recl))
 		}
 
 		return t.Failed()
@@ -142,16 +143,15 @@ func TestFreeListAuto(t *testing.T) {
 	maxnext := int64(0)
 
 	var j int
-	for j = 0; j < 5; j++ {
+	for j = 0; j < M; j++ {
 		//	log.Printf("ver %3d  j %d first", basever, j)
 
 		for ii := 0; ii < 2; ii++ {
 			for i := 0; i < 3*N; i++ {
 				ver := basever + int64(i)
 
-				fl = NewFreeList(fl.t1, fl.t0, fl.next, Page, ver, ver-1, b)
-				pl.ver = ver
-				pl.free = fl
+				pl.SetVer(ver)
+				fl.SetVer(ver, ver-1)
 
 				available, available2 := 0, 0
 				nextwas := fl.next
@@ -226,7 +226,7 @@ func TestFreeListAuto(t *testing.T) {
 		//	log.Printf("out of %d pages: %d taken %d used %d free. lastused %5x (%3d) ver %4d", fl.next/Page, len(taken), len(used), len(recl), lastused, lastused/Page, fl.ver)
 	}
 	//	log.Printf("dump free root %x %x  next %x\n%v", fl.t0.root, fl.t1.root, fl.next, dumpFile(pl))
-	log.Printf("out of %d pages: %d taken %d used %d free. lastused %5x (%3d) ver %4d", fl.next/Page, len(taken), len(used), len(recl), lastused, lastused/Page, fl.ver)
+	log.Printf("out of %d pages: %d taken %d used %d (%d+%d) free. lastused %5x (%3d) ver %4d", fl.next/Page, len(taken), len(used), len(recl), f0.Size(), f1.Size(), lastused, lastused/Page, fl.ver)
 
 	log.Printf("for page size 0x%x and %d*3 alloc/free cycles we've made %d iterations, last file grow was at %d", Page, N, j, lastgrow)
 }
@@ -235,12 +235,12 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	const Page = 0x100
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, nil)
+	pl := NewFixedLayout(b, Page, 0, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 
-	fl := NewFreeList(f0, f1, 2*Page, Page, 0, -1, b)
+	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, 0, -1)
 	pl.free = fl
 
 	var taken []int64
@@ -276,8 +276,7 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	for i := 0; i < t.N; i++ {
 		ver := int64(i)
 
-		pl.ver = ver
-		fl = NewFreeList(fl.t1, fl.t0, fl.next, Page, ver, ver-1, b)
+		fl.SetVer(ver, ver-1)
 
 		if (i+1)%3 == 0 {
 			free(ver)
@@ -291,12 +290,12 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 	const Page = 0x100
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, 8, 8, 1, nil)
+	pl := NewFixedLayout(b, Page, 0, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 
-	fl := NewFreeList(f0, f1, 2*Page, Page, 0, -1, b)
+	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, 0, -1)
 	pl.free = fl
 
 	var taken []int64
@@ -331,8 +330,6 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 
 	for i := 0; i < t.N; i++ {
 		//	ver := int64(i)
-
-		//	fl = NewFreeList(fl.t1.root, fl.t0.root, fl.next, Page, ver, ver-1, b)
 
 		if (i+1)%3 == 0 {
 			free(fl.ver)
