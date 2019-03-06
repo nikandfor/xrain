@@ -41,8 +41,6 @@ type (
 		free FreeList
 
 		meta *treemeta
-
-		ro bool
 	}
 
 	KVLayout struct { // base [2]byte, keys [size]int16, data []byte
@@ -223,9 +221,7 @@ func (l *FixedLayout) KeyCmp(off int64, i int, k []byte) (r int) {
 }
 
 func (l *FixedLayout) Key(off int64, i int) (r []byte) {
-	if !l.ro {
-		r = make([]byte, l.k)
-	}
+	r = make([]byte, l.k)
 
 	l.b.Access(off, l.p, func(p []byte) {
 		v := l.v
@@ -234,20 +230,14 @@ func (l *FixedLayout) Key(off int64, i int) (r []byte) {
 		}
 		s := 16 + i*(l.k+v)
 
-		if l.ro {
-			r = p[s : s+l.k]
-		} else {
-			copy(r, p[s:s+l.k])
-		}
+		copy(r, p[s:s+l.k])
 	})
 
 	return
 }
 
 func (l *FixedLayout) LastKey(off int64) (r []byte) {
-	if !l.ro {
-		r = make([]byte, l.v)
-	}
+	r = make([]byte, l.v)
 
 	l.b.Access(off, l.p, func(p []byte) {
 		v := l.v
@@ -257,24 +247,18 @@ func (l *FixedLayout) LastKey(off int64) (r []byte) {
 		i := l.nkeys(p) - 1
 		s := 16 + i*(l.k+v)
 
-		if l.ro {
-			r = p[s : s+l.k]
-		} else {
-			copy(r, p[s:s+l.k])
-		}
+		copy(r, p[s:s+l.k])
 	})
 
 	return
 }
 
 func (l *FixedLayout) Value(off int64, i int) (r []byte) {
-	if !l.ro {
-		v := l.v
-		if v < 8 {
-			v = 8
-		}
-		r = make([]byte, v)
+	v := l.v
+	if v < 8 {
+		v = 8
 	}
+	r = make([]byte, v)
 
 	l.b.Access(off, l.p, func(p []byte) {
 		v := l.v
@@ -283,11 +267,7 @@ func (l *FixedLayout) Value(off int64, i int) (r []byte) {
 		}
 		s := 16 + i*(l.k+v) + l.k
 
-		if l.ro {
-			r = p[s : s+v]
-		} else {
-			copy(r, p[s:s+v])
-		}
+		copy(r, p[s:s+v])
 	})
 
 	return

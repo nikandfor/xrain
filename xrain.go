@@ -126,6 +126,7 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	fpl1.SetFreeList(fl)
 
 	kvl := NewFixedLayout(d.b, d.page, ver, fl)
+	kvl.meta = &rp.datameta
 
 	t := NewTree(kvl, rp.data, d.page)
 	t.meta = &rp.datameta
@@ -386,11 +387,13 @@ func dumpFile(l PageLayout) string {
 	b.Sync()
 	sz := b.Size()
 	off := int64(0)
-	b.Access(0, 0x10, func(p []byte) {
-		if bytes.HasPrefix(p, []byte("xrain")) {
-			off = 2 * page
-		}
-	})
+	if sz > 0 {
+		b.Access(0, 0x10, func(p []byte) {
+			if bytes.HasPrefix(p, []byte("xrain")) {
+				off = 2 * page
+			}
+		})
+	}
 	for ; off < sz; off += page {
 		buf.WriteString(dumpPage(l, off))
 	}
