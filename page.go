@@ -31,6 +31,7 @@ type (
 		Rebalance(l, r int64) (l_, r_ int64, _ error)
 
 		SetVer(ver int64)
+		SetFreeList(fl FreeList)
 	}
 
 	BaseLayout struct { // isbranch bit, size uint15, extended uint24, _ [3]byte, ver int64
@@ -39,7 +40,7 @@ type (
 		ver  int64
 		free FreeList
 
-		//	meta *treemeta
+		meta *treemeta
 
 		ro bool
 	}
@@ -73,6 +74,10 @@ func NewFixedLayout(b Back, page, ver int64, fl FreeList) *FixedLayout {
 
 func (l *BaseLayout) SetVer(ver int64) {
 	l.ver = ver
+}
+
+func (l *BaseLayout) SetFreeList(fl FreeList) {
+	l.free = fl
 }
 
 func (l *BaseLayout) NKeys(off int64) (r int) {

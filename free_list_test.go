@@ -51,7 +51,7 @@ func TestFreeListAuto(t *testing.T) {
 
 	const (
 		Page = 0x80
-		N    = 50
+		N    = 30
 		M    = 5
 	)
 

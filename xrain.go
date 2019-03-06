@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path"
+	"runtime"
 	"strings"
 )
 
@@ -86,11 +88,7 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	ver := d.ver
 	rp := &d.root[ver%2]
 
-	kvl := &FixedLayout{BaseLayout: BaseLayout{
-		b:    d.b,
-		page: d.page,
-		ver:  ver,
-	}}
+	kvl := NewFixedLayout(d.b, d.page, ver, nil)
 
 	t := NewTree(kvl, rp.data, d.page)
 	t.meta = &rp.datameta
@@ -107,24 +105,15 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	return nil
 }
 
-/*
 func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	ver := d.ver + 1
 	rp := &d.root[ver%2]
 	rp1 := &d.root[(ver+1)%2]
 
-	fpl0 := &IntLayout{BaseLayout: BaseLayout{
-		b:    d.b,
-		page: d.page,
-		ver:  ver,
-		meta: &rp.free0meta,
-	}}
-	fpl1 := &IntLayout{BaseLayout: BaseLayout{
-		b:    d.b,
-		page: d.page,
-		ver:  ver,
-		meta: &rp.free1meta,
-	}}
+	fpl0 := NewFixedLayout(d.b, d.page, ver, nil)
+	fpl0.meta = &rp.free0meta
+	fpl1 := NewFixedLayout(d.b, d.page, ver, nil)
+	fpl1.meta = &rp.free0meta
 
 	f0 := NewTree(fpl0, rp.free0, d.page)
 	f1 := NewTree(fpl1, rp.free1, d.page)
@@ -132,16 +121,11 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	f0.meta = &rp.free0meta
 	f1.meta = &rp.free1meta
 
-	fl := NewFreeList(f0, f1, rp1.next, d.page, ver, d.keep, d.b)
-	fpl0.free = fl
-	fpl1.free = fl
+	fl := NewTreeFreeList(d.b, f0, f1, rp1.next, d.page, ver, d.keep)
+	fpl0.SetFreeList(fl)
+	fpl1.SetFreeList(fl)
 
-	kvl := &KVLayout{BaseLayout: BaseLayout{
-		b:    d.b,
-		page: d.page,
-		ver:  ver,
-		free: fl,
-	}}
+	kvl := NewFixedLayout(d.b, d.page, ver, fl)
 
 	t := NewTree(kvl, rp.data, d.page)
 	t.meta = &rp.datameta
@@ -167,7 +151,6 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 
 	return d.b.Sync()
 }
-*/
 
 func (d *DB) writeRoot() {
 	n := d.ver % 2
@@ -197,8 +180,6 @@ func (d *DB) writeRoot() {
 			binary.BigEndian.PutUint64(p[s:], uint64(m.datasize))
 			s += 0x8
 		}
-
-		log.Printf("s %x", s)
 	})
 }
 
@@ -404,7 +385,13 @@ func dumpFile(l PageLayout) string {
 	var buf strings.Builder
 	b.Sync()
 	sz := b.Size()
-	for off := int64(0); off < sz; off += page {
+	off := int64(0)
+	b.Access(0, 0x10, func(p []byte) {
+		if bytes.HasPrefix(p, []byte("xrain")) {
+			off = 2 * page
+		}
+	})
+	for ; off < sz; off += page {
 		buf.WriteString(dumpPage(l, off))
 	}
 	return buf.String()
@@ -416,4 +403,31 @@ func assert0(c bool, f string, args ...interface{}) {
 	}
 
 	panic(fmt.Sprintf(f, args...))
+}
+
+func callers(skip int) string {
+	if skip < 0 {
+		return ""
+	}
+
+	var pc [100]uintptr
+	n := runtime.Callers(2+skip, pc[:])
+
+	frames := runtime.CallersFrames(pc[:n])
+
+	var buf strings.Builder
+	buf.WriteString("\n")
+
+	for {
+		f, more := frames.Next()
+		if !strings.Contains(f.File, "/xrain/") {
+			break
+		}
+		fmt.Fprintf(&buf, "    %-20s at %s:%d\n", path.Ext(f.Function)[1:], path.Base(f.File), f.Line)
+		if !more {
+			break
+		}
+	}
+
+	return buf.String()
 }

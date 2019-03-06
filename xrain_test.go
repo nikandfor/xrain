@@ -1,9 +1,6 @@
-// +build ignore
-
 package xrain
 
 import (
-	"encoding/hex"
 	"log"
 	"testing"
 
@@ -19,18 +16,19 @@ func TestXRainSmoke(t *testing.T) {
 	assert.NoError(t, err)
 
 	err = db.UpdateNoBatching(func(tx *Tx) error {
-		return tx.t.Put([]byte("key_aaaa"), []byte("value_aaaa"))
+		return tx.t.Put([]byte("key_aaaa"), []byte("value_aa"))
 	})
 	assert.NoError(t, err)
 
-	log.Printf("dump\n%v", hex.Dump(b.Load(0, 7*Page)))
+	kvl := NewFixedLayout(b, Page, 0, nil)
+	log.Printf("dump\n%v", dumpFile(kvl))
 
 	db, err = NewDB(b, nil)
 	assert.NoError(t, err)
 
 	err = db.View(func(tx *Tx) error {
 		v := tx.t.Get([]byte("key_aaaa"))
-		assert.Equal(t, []byte("value_aaaa"), v)
+		assert.Equal(t, []byte("value_aa"), v)
 		return nil
 	})
 	assert.NoError(t, err)

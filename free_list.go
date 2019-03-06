@@ -2,10 +2,6 @@ package xrain
 
 import (
 	"encoding/binary"
-	"fmt"
-	"path"
-	"runtime"
-	"strings"
 )
 
 const (
@@ -255,31 +251,4 @@ func newkvint(k, v int64, add bool) kv {
 	binary.BigEndian.PutUint64(r.Key[:], uint64(k))
 	binary.BigEndian.PutUint64(r.Value[:], uint64(v))
 	return r
-}
-
-func callers(skip int) string {
-	if skip < 0 {
-		return ""
-	}
-
-	var pc [100]uintptr
-	n := runtime.Callers(2+skip, pc[:])
-
-	frames := runtime.CallersFrames(pc[:n])
-
-	var buf strings.Builder
-	buf.WriteString("\n")
-
-	for {
-		f, more := frames.Next()
-		if !strings.Contains(f.File, "/xrain/") {
-			break
-		}
-		fmt.Fprintf(&buf, "    %-20s at %s:%d\n", path.Ext(f.Function)[1:], path.Base(f.File), f.Line)
-		if !more {
-			break
-		}
-	}
-
-	return buf.String()
 }
