@@ -9,6 +9,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 var (
@@ -22,9 +23,12 @@ type (
 
 		page int64
 
+		mu   sync.Mutex
 		ver  int64
 		keep int64
 		root [2]rootpage
+
+		wmu sync.Mutex
 	}
 
 	Tx struct {
@@ -85,8 +89,10 @@ func NewDB(b Back, c *Config) (*DB, error) {
 }
 
 func (d *DB) View(f func(tx *Tx) error) error {
+	d.mu.Lock()
 	ver := d.ver
-	rp := &d.root[ver%2]
+	rp := d.root[ver%2]
+	d.mu.Unlock()
 
 	kvl := NewFixedLayout(d.b, d.page, ver, nil)
 
@@ -106,9 +112,17 @@ func (d *DB) View(f func(tx *Tx) error) error {
 }
 
 func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
+	defer d.wmu.Unlock()
+	d.wmu.Lock()
+
+	d.mu.Lock()
+
 	ver := d.ver + 1
 	rp := &d.root[ver%2]
-	rp1 := &d.root[(ver+1)%2]
+
+	*rp = d.root[(ver-1)%2]
+
+	d.mu.Unlock()
 
 	fpl0 := NewFixedLayout(d.b, d.page, ver, nil)
 	fpl0.meta = &rp.free0meta
@@ -121,7 +135,7 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	f0.meta = &rp.free0meta
 	f1.meta = &rp.free1meta
 
-	fl := NewTreeFreeList(d.b, f0, f1, rp1.next, d.page, ver, d.keep)
+	fl := NewTreeFreeList(d.b, f0, f1, rp.next, d.page, ver, d.keep)
 	fpl0.SetFreeList(fl)
 	fpl1.SetFreeList(fl)
 
@@ -146,22 +160,33 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	rp.free1 = f1.root
 	rp.next = fl.next
 
+	d.writeRoot(ver)
+
+	err = d.b.Sync()
+	if err != nil {
+		return err
+	}
+
+	d.mu.Lock()
 	d.ver++
+	d.mu.Unlock()
 
-	d.writeRoot()
-
-	return d.b.Sync()
+	return nil
 }
 
-func (d *DB) writeRoot() {
-	n := d.ver % 2
-	rp := &d.root[d.ver%2]
+func (d *DB) Update(f func(tx *Tx) error) error {
+	return nil
+}
+
+func (d *DB) writeRoot(ver int64) {
+	n := ver % 2
+	rp := &d.root[n]
 
 	d.b.Access(n*d.page, d.page, func(p []byte) {
 		s := 0x10
 		binary.BigEndian.PutUint64(p[s:], uint64(d.page))
 		s += 0x8
-		binary.BigEndian.PutUint64(p[s:], uint64(d.ver))
+		binary.BigEndian.PutUint64(p[s:], uint64(ver))
 		s += 0x8
 		binary.BigEndian.PutUint64(p[s:], uint64(rp.next))
 		s += 0x8
@@ -217,7 +242,7 @@ func (d *DB) initEmpty() (err error) {
 		}
 	})
 
-	d.writeRoot()
+	d.writeRoot(0)
 
 	return d.b.Sync()
 }
