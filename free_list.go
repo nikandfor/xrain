@@ -16,13 +16,13 @@ type (
 	FreeList interface {
 		Alloc(n int) (int64, error)
 		Reclaim(n int, off, ver int64) error
-		SetVer(ver, keep int64)
+		SetVer(keep int64)
 	}
 
 	TreeFreeList struct {
-		ver, keep int64
-		b         Back
-		t0, t1    *Tree // get, put
+		keep   int64
+		b      Back
+		t0, t1 *Tree // get, put
 
 		last       []byte
 		page       int64
@@ -45,7 +45,7 @@ type (
 	}
 )
 
-func NewTreeFreeList(b Back, t0, t1 *Tree, next, page int64, ver, keep int64) *TreeFreeList {
+func NewTreeFreeList(b Back, t0, t1 *Tree, next, page int64, keep int64) *TreeFreeList {
 	if t0 == t1 {
 		assert0(t0 != t1, "must be 2 distinct trees")
 	}
@@ -61,7 +61,7 @@ func NewTreeFreeList(b Back, t0, t1 *Tree, next, page int64, ver, keep int64) *T
 		flen: flen,
 	}
 
-	l.SetVer(ver, keep)
+	l.SetVer(keep)
 
 	return l
 }
@@ -79,8 +79,7 @@ func NewEverNextFreeList(b Back, page int64) *NextFreeList {
 	return l
 }
 
-func (l *TreeFreeList) SetVer(ver, keep int64) {
-	l.ver = ver
+func (l *TreeFreeList) SetVer(keep int64) {
 	l.keep = keep
 	l.exht = l.t0 == nil
 	l.last = nil
@@ -178,43 +177,15 @@ func (l *TreeFreeList) Reclaim(n int, off, ver int64) error {
 	return l.unlock()
 }
 
-func (l *TreeFreeList) allocGrow() (int64, error) {
-	off := l.next
-	if err := l.growFile(off + l.page); err != nil {
-		return 0, err
+func (l *TreeFreeList) allocGrow() (off int64, err error) {
+	off = l.next
+	l.flen, err = growFile(l.b, l.page, off+l.page)
+	if err != nil {
+		return
 	}
 	l.next += l.page
 
 	return off, nil
-}
-
-func (l *TreeFreeList) growFile(sz int64) error {
-	if sz <= l.flen {
-		return nil
-	}
-
-	for l.flen < sz {
-		if l.flen < 4*l.page {
-			l.flen = 4 * l.page
-		} else if l.flen < 64*KiB {
-			l.flen *= 2
-		} else if l.flen < 100*MiB {
-			l.flen += l.flen / 4
-		} else if l.flen < GiB {
-			l.flen += l.flen / 16
-		} else {
-			l.flen += GiB / 16 // 64 MiB
-		}
-
-		l.flen -= l.flen % l.page
-	}
-
-	err := l.b.Truncate(l.flen)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (l *TreeFreeList) unlock() (err error) {
@@ -239,7 +210,7 @@ func (l *TreeFreeList) unlock() (err error) {
 	return nil
 }
 
-func (l *NextFreeList) SetVer(ver, keep int64) {}
+func (l *NextFreeList) SetVer(keep int64) {}
 
 func (l *NextFreeList) Alloc(n int) (off int64, err error) {
 	off = l.next
@@ -281,6 +252,37 @@ func (l *NextFreeList) growFile(sz int64) error {
 	}
 
 	return nil
+}
+
+func growFile(b Back, page, sz int64) (flen int64, err error) {
+	flen = b.Size()
+
+	if sz <= flen {
+		return
+	}
+
+	for flen < sz {
+		if flen < 4*page {
+			flen = 4 * page
+		} else if flen < 64*KiB {
+			flen *= 2
+		} else if flen < 100*MiB {
+			flen += flen / 4
+		} else if flen < GiB {
+			flen += flen / 16
+		} else {
+			flen += GiB / 16 // 64 MiB
+		}
+
+		flen -= flen % page
+	}
+
+	err = b.Truncate(flen)
+	if err != nil {
+		return
+	}
+
+	return
 }
 
 func newkv(k, v []byte) kv {

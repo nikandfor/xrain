@@ -63,7 +63,7 @@ func TestFreeListAuto(t *testing.T) {
 	f0.meta = &treemeta{}
 	f1.meta = &treemeta{}
 
-	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, 0, -1)
+	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, -1)
 	pl.free = fl
 
 	var taken []int64
@@ -151,7 +151,7 @@ func TestFreeListAuto(t *testing.T) {
 				ver := basever + int64(i)
 
 				pl.SetVer(ver)
-				fl.SetVer(ver, ver-1)
+				fl.SetVer(ver - 1)
 
 				available, available2 := 0, 0
 				nextwas := fl.next
@@ -190,7 +190,7 @@ func TestFreeListAuto(t *testing.T) {
 					cnt := 0
 					for off := int64(0); off < fl.next; off += Page {
 						b.Access(off, 0x10, func(p []byte) {
-							if pl.getver(p) == fl.ver {
+							if pl.getver(p) == ver {
 								cnt++
 							}
 						})
@@ -226,7 +226,7 @@ func TestFreeListAuto(t *testing.T) {
 		//	log.Printf("out of %d pages: %d taken %d used %d free. lastused %5x (%3d) ver %4d", fl.next/Page, len(taken), len(used), len(recl), lastused, lastused/Page, fl.ver)
 	}
 	//	log.Printf("dump free root %x %x  next %x\n%v", fl.t0.root, fl.t1.root, fl.next, dumpFile(pl))
-	log.Printf("out of %d pages: %d taken %d used %d (%d+%d) free. lastused %5x (%3d) ver %4d", fl.next/Page, len(taken), len(used), len(recl), f0.Size(), f1.Size(), lastused, lastused/Page, fl.ver)
+	log.Printf("out of %d pages: %d taken %d used %d (%d+%d) free. lastused %5x (%3d) ver %4d", fl.next/Page, len(taken), len(used), len(recl), f0.Size(), f1.Size(), lastused, lastused/Page, basever)
 
 	log.Printf("for page size 0x%x and %d*3 alloc/free cycles we've made %d iterations, last file grow was at %d", Page, N, j, lastgrow)
 }
@@ -240,7 +240,7 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 
-	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, 0, -1)
+	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, -1)
 	pl.free = fl
 
 	var taken []int64
@@ -276,7 +276,7 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	for i := 0; i < t.N; i++ {
 		ver := int64(i)
 
-		fl.SetVer(ver, ver-1)
+		fl.SetVer(ver - 1)
 
 		if (i+1)%3 == 0 {
 			free(ver)
@@ -295,7 +295,7 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 
-	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, 0, -1)
+	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, -1)
 	pl.free = fl
 
 	var taken []int64
@@ -332,9 +332,9 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 		//	ver := int64(i)
 
 		if (i+1)%3 == 0 {
-			free(fl.ver)
+			free(0)
 		} else {
-			alloc(fl.ver)
+			alloc(0)
 		}
 	}
 }

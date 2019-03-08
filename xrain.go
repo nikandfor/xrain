@@ -135,7 +135,7 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	f0.meta = &rp.free0meta
 	f1.meta = &rp.free1meta
 
-	fl := NewTreeFreeList(d.b, f0, f1, rp.next, d.page, ver, d.keep)
+	fl := NewTreeFreeList(d.b, f0, f1, rp.next, d.page, d.keep)
 	fpl0.SetFreeList(fl)
 	fpl1.SetFreeList(fl)
 
@@ -332,7 +332,7 @@ func checkFile(l PageLayout) {
 	}
 }
 
-func dumpPage(l PageLayout, off int64) string {
+func dumpPage(l PageLayout, off int64) (string, int64) {
 	var b Back
 	var base *BaseLayout
 	var kvl *KVLayout
@@ -355,14 +355,17 @@ func dumpPage(l PageLayout, off int64) string {
 
 	var buf bytes.Buffer
 
+	var size int
+
 	b.Access(off, page, func(p []byte) {
 		tp := 'B'
 		if l.IsLeaf(off) {
 			tp = 'D'
 		}
 		ver := base.getver(p)
+		size = base.extended(p)
 		n := l.NKeys(off)
-		fmt.Fprintf(&buf, "%4x: %c ver %3d  nkeys %4d  ", off, tp, ver, n)
+		fmt.Fprintf(&buf, "%4x: %c ext %2d ver %3d  nkeys %4d  ", off, tp, size, ver, n)
 		if kvl != nil {
 			//	fmt.Fprintf(&buf, "datasize %3x free space %3x\n", kvl.datasize(p), len(p)-kvl.datasize(p)-16)
 		} else {
@@ -391,7 +394,7 @@ func dumpPage(l PageLayout, off int64) string {
 		}
 	})
 
-	return buf.String()
+	return buf.String(), base.page * int64(size)
 }
 
 func dumpFile(l PageLayout) string {
@@ -419,8 +422,11 @@ func dumpFile(l PageLayout) string {
 			}
 		})
 	}
-	for ; off < sz; off += page {
-		buf.WriteString(dumpPage(l, off))
+
+	for off < sz {
+		s, l := dumpPage(l, off)
+		buf.WriteString(s)
+		off += l
 	}
 	return buf.String()
 }

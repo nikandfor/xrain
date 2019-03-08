@@ -404,7 +404,7 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 		for k := t.Next(nil); k != nil; k = t.Next(k) {
 			cnt++
 			if v, ok := t.dd[string(k)]; !ok || v != string(t.Get(k)) {
-				log.Fatalf("data mismatch: %x -> %x != %x (%v)", k, t.Get(k), []byte(v), ok)
+				log.Fatalf("data mismatch (root %x): %x -> %x != %x (%v)", t.root, k, t.Get(k), []byte(v), ok)
 			}
 		}
 		if cnt != len(t.dd) {
