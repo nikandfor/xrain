@@ -4,7 +4,8 @@ func (tx *Tx) Put(k, v []byte) error {
 	if !tx.writable {
 		panic("not writable")
 	}
-	return tx.t.Put(k, v)
+	_, err := tx.t.Put(k, v)
+	return err
 }
 
 func (tx *Tx) Get(k []byte) []byte {
@@ -12,5 +13,6 @@ func (tx *Tx) Get(k []byte) []byte {
 }
 
 func (tx *Tx) Del(k []byte) error {
-	return tx.t.Del(k)
+	_, err := tx.t.Del(k)
+	return err
 }

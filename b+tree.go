@@ -51,7 +51,7 @@ func (t *Tree) Size() int {
 	return int(t.meta.n)
 }
 
-func (t *Tree) Put(k, v []byte) (err error) {
+func (t *Tree) Put(k, v []byte) (old []byte, err error) {
 	st, eq := t.seek(nil, k)
 
 	//	log.Printf("root %x Put %x -> %x", t.root, k, v)
@@ -61,15 +61,17 @@ func (t *Tree) Put(k, v []byte) (err error) {
 	i := last.Index(t.mask)
 
 	if eq {
+		old = t.p.Value(off, i)
+
 		off, err = t.p.Del(off, i)
 		if err != nil {
-			return err
+			return
 		}
 	}
 
 	l, r, err := t.p.Put(off, i, k, v)
 	if err != nil {
-		return err
+		return
 	}
 
 	if checkTree != nil {
@@ -80,25 +82,29 @@ func (t *Tree) Put(k, v []byte) (err error) {
 		t.meta.n++
 	}
 
-	return t.out(st, l, r)
+	err = t.out(st, l, r)
+
+	return
 }
 
-func (t *Tree) Del(k []byte) (err error) {
+func (t *Tree) Del(k []byte) (old []byte, err error) {
 	st, eq := t.seek(nil, k)
 
 	//	log.Printf("root %x Del %x", t.root, k)
 
 	if !eq {
-		return nil
+		return
 	}
 
 	last := st[len(st)-1]
 	off := last.Off(t.mask)
 	i := last.Index(t.mask)
 
+	old = t.p.Value(off, i)
+
 	l, err := t.p.Del(off, i)
 	if err != nil {
-		return err
+		return
 	}
 
 	if checkTree != nil {
@@ -109,7 +115,8 @@ func (t *Tree) Del(k []byte) (err error) {
 		t.meta.n--
 	}
 
-	return t.out(st, l, NilPage)
+	err = t.out(st, l, NilPage)
+	return
 }
 
 func (t *Tree) Get(k []byte) (v []byte) {

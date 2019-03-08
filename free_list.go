@@ -134,7 +134,7 @@ next:
 
 	l.lock = true
 
-	err = l.t0.Del(key)
+	_, err = l.t0.Del(key)
 	if err != nil {
 		return 0, err
 	}
@@ -167,7 +167,7 @@ func (l *TreeFreeList) Reclaim(n int, off, ver int64) error {
 
 	l.lock = true
 
-	err := l.t1.Put(kv.Key[:], kv.Value[:])
+	_, err := l.t1.Put(kv.Key[:], kv.Value[:])
 	if err != nil {
 		return err
 	}
@@ -220,9 +220,9 @@ func (l *TreeFreeList) unlock() (err error) {
 	for i := 0; i < len(l.deferred); i++ {
 		kv := l.deferred[i]
 		if kv.add {
-			err = l.t1.Put(kv.Key[:], kv.Value[:])
+			_, err = l.t1.Put(kv.Key[:], kv.Value[:])
 		} else {
-			err = l.t0.Del(kv.Key[:])
+			_, err = l.t0.Del(kv.Key[:])
 		}
 		if err != nil {
 			return

@@ -16,29 +16,33 @@ func TestTreeSmall(t *testing.T) {
 	tr := NewTree(pl, 0, Page)
 	tr.meta = &treemeta{depth: 1}
 
-	err := tr.Put([]byte("key_aaaa"), []byte("value_aa"))
+	v, err := tr.Put([]byte("key_aaaa"), []byte("value_aa"))
 	assert.NoError(t, err)
+	assert.Nil(t, v)
 
 	assert.Equal(t, 1, tr.Size())
 
-	v := tr.Get([]byte("key_aaaa"))
+	v = tr.Get([]byte("key_aaaa"))
 	assert.EqualValues(t, "value_aa", v)
 
-	err = tr.Put([]byte("key_aaaa"), []byte("value_22"))
+	v, err = tr.Put([]byte("key_aaaa"), []byte("value_22"))
 	assert.NoError(t, err)
+	assert.EqualValues(t, []byte("value_aa"), v)
 
 	assert.Equal(t, 1, tr.Size())
 
 	v = tr.Get([]byte("key_aaaa"))
 	assert.EqualValues(t, "value_22", v)
 
-	err = tr.Del([]byte("some_key"))
+	v, err = tr.Del([]byte("some_key"))
 	assert.NoError(t, err)
+	assert.Nil(t, v)
 
 	assert.Equal(t, 1, tr.Size())
 
-	err = tr.Del([]byte("key_aaaa"))
+	v, err = tr.Del([]byte("key_aaaa"))
 	assert.NoError(t, err)
+	assert.EqualValues(t, "value_22", v)
 
 	assert.Equal(t, 0, tr.Size())
 
@@ -65,7 +69,7 @@ func TestTreeIterator(t *testing.T) {
 		q := ((i + 1) * Prime) % N
 		k := fmt.Sprintf("key_%04x", q)
 		v := fmt.Sprintf("value_%02x", q)
-		err := tr.Put([]byte(k), []byte(v))
+		_, err := tr.Put([]byte(k), []byte(v))
 		assert.NoError(t, err)
 	}
 
@@ -118,7 +122,7 @@ func TestTreeBig(t *testing.T) {
 		have := tr.Get([]byte(k))
 		n := tr.Size()
 
-		err := tr.Put([]byte(k), []byte(v))
+		_, err := tr.Put([]byte(k), []byte(v))
 		assert.NoError(t, err)
 
 		if have != nil {
@@ -163,7 +167,7 @@ func TestTreeBig(t *testing.T) {
 		n := tr.Size()
 
 		if (i+1)*Prime%3 == 0 {
-			err := tr.Put([]byte(k), []byte(v))
+			_, err := tr.Put([]byte(k), []byte(v))
 			assert.NoError(t, err)
 
 			if have != nil {
@@ -172,7 +176,7 @@ func TestTreeBig(t *testing.T) {
 				assert.EqualValues(t, n+1, tr.Size())
 			}
 		} else {
-			err := tr.Del([]byte(k))
+			_, err := tr.Del([]byte(k))
 			assert.NoError(t, err)
 
 			if have != nil {
@@ -184,7 +188,7 @@ func TestTreeBig(t *testing.T) {
 	}
 
 	for k := tr.Next(nil); k != nil; k = tr.Next(k) {
-		err := tr.Del(k)
+		_, err := tr.Del(k)
 		assert.NoError(t, err)
 	}
 }
