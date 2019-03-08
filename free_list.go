@@ -33,6 +33,12 @@ type (
 		lock bool
 	}
 
+	NextFreeList struct {
+		b          Back
+		page       int64
+		next, flen int64
+	}
+
 	kv struct {
 		Key, Value [8]byte
 		add        bool
@@ -60,15 +66,14 @@ func NewTreeFreeList(b Back, t0, t1 *Tree, next, page int64, ver, keep int64) *T
 	return l
 }
 
-func NewTreeFreeListNoReclaim(b Back, page int64) *TreeFreeList {
+func NewEverNextFreeList(b Back, page int64) *NextFreeList {
 	flen := b.Size()
 
-	l := &TreeFreeList{
+	l := &NextFreeList{
 		b:    b,
 		page: page,
 		next: flen,
 		flen: flen,
-		exht: true,
 	}
 
 	return l
@@ -86,6 +91,9 @@ func (l *TreeFreeList) SetVer(ver, keep int64) {
 }
 
 func (l *TreeFreeList) Alloc(n int) (off int64, err error) {
+	if n != 1 {
+		panic(n)
+	}
 	//	defer func(last []byte) {
 	//		log.Printf("alloc  [%3x] %3x  (last %2x)%v", l.t0.root, off, last, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
@@ -103,16 +111,11 @@ func (l *TreeFreeList) Alloc(n int) (off int64, err error) {
 	}
 
 next:
-	next := l.t0.Next(l.last)
-
-	//	log.Printf("Alloc nxt %x <- %x   next %x", next, l.last, l.next)
-	if next == nil {
+	l.last = l.t0.Next(l.last)
+	if l.last == nil {
 		l.exht = true
 		return l.allocGrow()
 	}
-
-	l.last = make([]byte, 8)
-	copy(l.last, next)
 
 	key := l.last
 	off = int64(binary.BigEndian.Uint64(key))
@@ -232,6 +235,50 @@ func (l *TreeFreeList) unlock() (err error) {
 
 	l.deferred = l.deferred[:0]
 	l.lock = false
+
+	return nil
+}
+
+func (l *NextFreeList) SetVer(ver, keep int64) {}
+
+func (l *NextFreeList) Alloc(n int) (off int64, err error) {
+	off = l.next
+	size := int64(n) * l.page
+	if err := l.growFile(off + size); err != nil {
+		return 0, err
+	}
+	l.next += size
+
+	return off, nil
+}
+
+func (l *NextFreeList) Reclaim(n int, off, ver int64) error { return nil }
+
+func (l *NextFreeList) growFile(sz int64) error {
+	if sz <= l.flen {
+		return nil
+	}
+
+	for l.flen < sz {
+		if l.flen < 4*l.page {
+			l.flen = 4 * l.page
+		} else if l.flen < 64*KiB {
+			l.flen *= 2
+		} else if l.flen < 100*MiB {
+			l.flen += l.flen / 4
+		} else if l.flen < GiB {
+			l.flen += l.flen / 16
+		} else {
+			l.flen += GiB / 16 // 64 MiB
+		}
+
+		l.flen -= l.flen % l.page
+	}
+
+	err := l.b.Truncate(l.flen)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

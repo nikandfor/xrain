@@ -11,7 +11,7 @@ func TestTreeSmall(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(Page)
-	fl := NewTreeFreeListNoReclaim(b, Page)
+	fl := NewEverNextFreeList(b, Page)
 	pl := NewFixedLayout(b, Page, 0, fl)
 	tr := NewTree(pl, 0, Page)
 	tr.meta = &treemeta{depth: 1}
@@ -60,7 +60,7 @@ func TestTreeIterator(t *testing.T) {
 	)
 
 	b := NewMemBack(Page)
-	fl := NewTreeFreeListNoReclaim(b, Page)
+	fl := NewEverNextFreeList(b, Page)
 	pl := NewFixedLayout(b, Page, 0, fl)
 	tr := NewTree(pl, 0, Page)
 	tr.meta = &treemeta{depth: 1}
@@ -109,7 +109,7 @@ func TestTreeBig(t *testing.T) {
 	)
 
 	b := NewMemBack(Page)
-	fl := NewTreeFreeListNoReclaim(b, Page)
+	fl := NewEverNextFreeList(b, Page)
 	pl := NewFixedLayout(b, Page, 0, fl)
 	tr := NewTree(pl, 0, Page)
 	tr.meta = &treemeta{depth: 1}

@@ -19,7 +19,7 @@ func TestDumpFreeList(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0 * Page)
-	fl := NewTreeFreeListNoReclaim(b, Page)
+	fl := NewEverNextFreeList(b, Page)
 
 	off, err := fl.Alloc(1)
 	assert.NoError(t, err)
