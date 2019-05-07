@@ -185,7 +185,7 @@ func TestPageFixedRebalance8(t *testing.T) {
 	testPageRebalance8(t, pl, 6, 2, b, pl.free, &ver, true)
 }
 
-func TestPageFixedReclaim(t *testing.T) {
+func TestPageFixedFree(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
@@ -194,7 +194,7 @@ func TestPageFixedReclaim(t *testing.T) {
 	off, err := pl.AllocRoot()
 	assert.NoError(t, err)
 
-	err = pl.Reclaim(off)
+	err = pl.Free(off)
 	assert.NoError(t, err)
 }
 

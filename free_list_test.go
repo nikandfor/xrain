@@ -33,7 +33,7 @@ func TestDumpFreelist(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 2*int64(Page), off)
 
-	err = fl.Reclaim(1, off, 0)
+	err = fl.Free(1, off, 0)
 	assert.NoError(t, err)
 
 	off, err = fl.Alloc(1)
@@ -95,7 +95,7 @@ func TestFreelistAuto(t *testing.T) {
 
 		//	log.Printf("ver %3d free  %x", cv, off)
 
-		err := fl.Reclaim(1, off, ver)
+		err := fl.Free(1, off, ver)
 		assert.NoError(t, err)
 	}
 	check := func(n int) bool {
@@ -269,7 +269,7 @@ func BenchmarkFreelistVerInc(t *testing.B) {
 
 		//	log.Printf("ver %3d free  %x", cv, off)
 
-		err := fl.Reclaim(1, off, ver)
+		err := fl.Free(1, off, ver)
 		assert.NoError(t, err)
 	}
 
@@ -324,7 +324,7 @@ func BenchmarkFreelistVerConst(t *testing.B) {
 
 		//	log.Printf("ver %3d free  %x", cv, off)
 
-		err := fl.Reclaim(1, off, ver)
+		err := fl.Free(1, off, ver)
 		assert.NoError(t, err)
 	}
 

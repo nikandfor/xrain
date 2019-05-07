@@ -10,7 +10,7 @@ const NilPage = -1
 type (
 	PageLayout interface {
 		AllocRoot() (int64, error)
-		Reclaim(p int64) error
+		Free(p int64) error
 
 		NKeys(p int64) int
 		IsLeaf(p int64) bool
@@ -92,7 +92,7 @@ func (l *BaseLayout) IsLeaf(off int64) (r bool) {
 	return
 }
 
-func (l *BaseLayout) Reclaim(off int64) error {
+func (l *BaseLayout) Free(off int64) error {
 	if l.free == nil {
 		return nil
 	}
@@ -104,7 +104,7 @@ func (l *BaseLayout) Reclaim(off int64) error {
 		n = l.extended(p)
 	})
 
-	return l.free.Reclaim(n, off, ver)
+	return l.free.Free(n, off, ver)
 }
 
 func (l *BaseLayout) alloc(nold, nnew int, off, ver int64) (noff int64, err error) {
@@ -117,7 +117,7 @@ func (l *BaseLayout) alloc(nold, nnew int, off, ver int64) (noff int64, err erro
 		return noff, nil
 	}
 
-	err = l.free.Reclaim(nold, off, ver)
+	err = l.free.Free(nold, off, ver)
 	if err != nil {
 		return
 	}
@@ -546,7 +546,7 @@ again:
 	}
 
 	if rfree {
-		err = l.free.Reclaim(l.pm, roff, rver)
+		err = l.free.Free(l.pm, roff, rver)
 		if err != nil {
 			return
 		}

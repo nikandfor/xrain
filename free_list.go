@@ -15,7 +15,7 @@ const (
 type (
 	Freelist interface {
 		Alloc(n int) (int64, error)
-		Reclaim(n int, off, ver int64) error
+		Free(n int, off, ver int64) error
 		SetVer(keep int64)
 	}
 
@@ -149,9 +149,9 @@ next:
 	return off, nil
 }
 
-func (l *TreeFreelist) Reclaim(n int, off, ver int64) error {
+func (l *TreeFreelist) Free(n int, off, ver int64) error {
 	//	defer func() {
-	//		log.Printf("reclaim[%3x] %3x %d%v", l.t1.root, off, ver, callers(-1))
+	//		log.Printf("free[%3x] %3x %d%v", l.t1.root, off, ver, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
 	//	}()
 
@@ -224,7 +224,7 @@ func (l *NextFreelist) Alloc(n int) (off int64, err error) {
 	return off, nil
 }
 
-func (l *NextFreelist) Reclaim(n int, off, ver int64) error { return nil }
+func (l *NextFreelist) Free(n int, off, ver int64) error { return nil }
 
 func growFile(b Back, page, sz int64) (flen int64, err error) {
 	flen = b.Size()

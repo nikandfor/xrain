@@ -353,7 +353,7 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 	}
 
 	if r == NilPage && !t.p.IsLeaf(l) && t.p.NKeys(l) == 1 {
-		err = t.p.Reclaim(l)
+		err = t.p.Free(l)
 		if err != nil {
 			return err
 		}
