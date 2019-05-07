@@ -215,7 +215,8 @@ func (l *NextFreelist) SetVer(keep int64) {}
 func (l *NextFreelist) Alloc(n int) (off int64, err error) {
 	off = l.next
 	size := int64(n) * l.page
-	if err := l.growFile(off + size); err != nil {
+	l.flen, err = growFile(l.b, l.page, off+size)
+	if err != nil {
 		return 0, err
 	}
 	l.next += size
@@ -224,35 +225,6 @@ func (l *NextFreelist) Alloc(n int) (off int64, err error) {
 }
 
 func (l *NextFreelist) Reclaim(n int, off, ver int64) error { return nil }
-
-func (l *NextFreelist) growFile(sz int64) error {
-	if sz <= l.flen {
-		return nil
-	}
-
-	for l.flen < sz {
-		if l.flen < 4*l.page {
-			l.flen = 4 * l.page
-		} else if l.flen < 64*KiB {
-			l.flen *= 2
-		} else if l.flen < 100*MiB {
-			l.flen += l.flen / 4
-		} else if l.flen < GiB {
-			l.flen += l.flen / 16
-		} else {
-			l.flen += GiB / 16 // 64 MiB
-		}
-
-		l.flen -= l.flen % l.page
-	}
-
-	err := l.b.Truncate(l.flen)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
 
 func growFile(b Back, page, sz int64) (flen int64, err error) {
 	flen = b.Size()
