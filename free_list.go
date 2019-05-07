@@ -13,7 +13,7 @@ const (
 )
 
 type (
-	FreeList interface {
+	Freelist interface {
 		Alloc(n int) (int64, error)
 		Reclaim(n int, off, ver int64) error
 		SetVer(keep int64)
@@ -103,7 +103,7 @@ func (l *TreeFreelist) Alloc(n int) (off int64, err error) {
 	//		log.Printf("alloc out: root %x last %2x next %x -> %x", l.t0.root, l.last, l.next, off)
 	//	}()
 
-	//	log.Printf("FreeList: %+v", l)
+	//	log.Printf("Freelist: %+v", l)
 
 	if l.exht {
 		return l.allocGrow()

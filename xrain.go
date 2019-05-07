@@ -136,8 +136,8 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	f1.meta = &rp.free1meta
 
 	fl := NewTreeFreelist(d.b, f0, f1, rp.next, d.page, d.keep)
-	fpl0.SetFreeList(fl)
-	fpl1.SetFreeList(fl)
+	fpl0.SetFreelist(fl)
+	fpl1.SetFreelist(fl)
 
 	kvl := NewFixedLayout(d.b, d.page, ver, fl)
 	kvl.meta = &rp.datameta

@@ -31,14 +31,14 @@ type (
 		Rebalance(l, r int64) (l_, r_ int64, _ error)
 
 		SetVer(ver int64)
-		SetFreeList(fl FreeList)
+		SetFreelist(fl Freelist)
 	}
 
 	BaseLayout struct { // isbranch bit, size uint15, extended uint24, _ [3]byte, ver int64
 		b    Back
 		page int64
 		ver  int64
-		free FreeList
+		free Freelist
 
 		meta *treemeta
 	}
@@ -54,7 +54,7 @@ type (
 	}
 )
 
-func NewFixedLayout(b Back, page, ver int64, fl FreeList) *FixedLayout {
+func NewFixedLayout(b Back, page, ver int64, fl Freelist) *FixedLayout {
 	return &FixedLayout{
 		BaseLayout: BaseLayout{
 			b:    b,
@@ -74,7 +74,7 @@ func (l *BaseLayout) SetVer(ver int64) {
 	l.ver = ver
 }
 
-func (l *BaseLayout) SetFreeList(fl FreeList) {
+func (l *BaseLayout) SetFreelist(fl Freelist) {
 	l.free = fl
 }
 

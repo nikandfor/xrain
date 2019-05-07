@@ -15,7 +15,7 @@ func TestFSizeConstants(t *testing.T) {
 	assert.Equal(t, 1024*1024*1024, GiB)
 }
 
-func TestDumpFreeList(t *testing.T) {
+func TestDumpFreelist(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0 * Page)
@@ -41,7 +41,7 @@ func TestDumpFreeList(t *testing.T) {
 	assert.Equal(t, 3*int64(Page), off)
 }
 
-func TestFreeListAuto(t *testing.T) {
+func TestFreelistAuto(t *testing.T) {
 	defer func() {
 		checkTree = nil
 	}()
@@ -231,7 +231,7 @@ func TestFreeListAuto(t *testing.T) {
 	log.Printf("for page size 0x%x and %d*3 alloc/free cycles we've made %d iterations, last file grow was at %d", Page, N, j, lastgrow)
 }
 
-func BenchmarkFreeListVerInc(t *testing.B) {
+func BenchmarkFreelistVerInc(t *testing.B) {
 	const Page = 0x100
 
 	b := NewMemBack(2 * Page)
@@ -286,7 +286,7 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	}
 }
 
-func BenchmarkFreeListVerConst(t *testing.B) {
+func BenchmarkFreelistVerConst(t *testing.B) {
 	const Page = 0x100
 
 	b := NewMemBack(2 * Page)

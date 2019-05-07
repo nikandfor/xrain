@@ -339,7 +339,7 @@ func testPageDelOnePage8(t *testing.T, loff int64, pl PageLayout) {
 	assert.Equal(t, 0, pl.NKeys(loff))
 }
 
-func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl FreeList, ver *int64, alloc bool) {
+func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl Freelist, ver *int64, alloc bool) {
 	loff, err := fl.Alloc(1)
 	assert.NoError(t, err)
 
