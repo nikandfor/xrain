@@ -19,7 +19,7 @@ type (
 		SetVer(keep int64)
 	}
 
-	TreeFreeList struct {
+	TreeFreelist struct {
 		keep   int64
 		b      Back
 		t0, t1 *Tree // get, put
@@ -33,7 +33,7 @@ type (
 		lock bool
 	}
 
-	NextFreeList struct {
+	NextFreelist struct {
 		b          Back
 		page       int64
 		next, flen int64
@@ -45,14 +45,14 @@ type (
 	}
 )
 
-func NewTreeFreeList(b Back, t0, t1 *Tree, next, page int64, keep int64) *TreeFreeList {
+func NewTreeFreelist(b Back, t0, t1 *Tree, next, page int64, keep int64) *TreeFreelist {
 	if t0 == t1 {
 		assert0(t0 != t1, "must be 2 distinct trees")
 	}
 
 	flen := b.Size()
 
-	l := &TreeFreeList{
+	l := &TreeFreelist{
 		t0:   t0,
 		t1:   t1,
 		b:    b,
@@ -66,10 +66,10 @@ func NewTreeFreeList(b Back, t0, t1 *Tree, next, page int64, keep int64) *TreeFr
 	return l
 }
 
-func NewEverNextFreeList(b Back, page int64) *NextFreeList {
+func NewEverNextFreelist(b Back, page int64) *NextFreelist {
 	flen := b.Size()
 
-	l := &NextFreeList{
+	l := &NextFreelist{
 		b:    b,
 		page: page,
 		next: flen,
@@ -79,7 +79,7 @@ func NewEverNextFreeList(b Back, page int64) *NextFreeList {
 	return l
 }
 
-func (l *TreeFreeList) SetVer(keep int64) {
+func (l *TreeFreelist) SetVer(keep int64) {
 	l.keep = keep
 	l.exht = l.t0 == nil
 	l.last = nil
@@ -89,7 +89,7 @@ func (l *TreeFreeList) SetVer(keep int64) {
 	}
 }
 
-func (l *TreeFreeList) Alloc(n int) (off int64, err error) {
+func (l *TreeFreelist) Alloc(n int) (off int64, err error) {
 	if n != 1 {
 		panic(n)
 	}
@@ -149,7 +149,7 @@ next:
 	return off, nil
 }
 
-func (l *TreeFreeList) Reclaim(n int, off, ver int64) error {
+func (l *TreeFreelist) Reclaim(n int, off, ver int64) error {
 	//	defer func() {
 	//		log.Printf("reclaim[%3x] %3x %d%v", l.t1.root, off, ver, callers(-1))
 	//		log.Printf("freelist state %x %x defer %x\n%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p))
@@ -177,7 +177,7 @@ func (l *TreeFreeList) Reclaim(n int, off, ver int64) error {
 	return l.unlock()
 }
 
-func (l *TreeFreeList) allocGrow() (off int64, err error) {
+func (l *TreeFreelist) allocGrow() (off int64, err error) {
 	off = l.next
 	l.flen, err = growFile(l.b, l.page, off+l.page)
 	if err != nil {
@@ -188,7 +188,7 @@ func (l *TreeFreeList) allocGrow() (off int64, err error) {
 	return off, nil
 }
 
-func (l *TreeFreeList) unlock() (err error) {
+func (l *TreeFreelist) unlock() (err error) {
 	//	log.Printf("unlock: root %x %x  %x\n%v%v", l.t0.root, l.t1.root, l.deferred, dumpFile(l.t0.p), callers(0))
 
 	for i := 0; i < len(l.deferred); i++ {
@@ -210,9 +210,9 @@ func (l *TreeFreeList) unlock() (err error) {
 	return nil
 }
 
-func (l *NextFreeList) SetVer(keep int64) {}
+func (l *NextFreelist) SetVer(keep int64) {}
 
-func (l *NextFreeList) Alloc(n int) (off int64, err error) {
+func (l *NextFreelist) Alloc(n int) (off int64, err error) {
 	off = l.next
 	size := int64(n) * l.page
 	if err := l.growFile(off + size); err != nil {
@@ -223,9 +223,9 @@ func (l *NextFreeList) Alloc(n int) (off int64, err error) {
 	return off, nil
 }
 
-func (l *NextFreeList) Reclaim(n int, off, ver int64) error { return nil }
+func (l *NextFreelist) Reclaim(n int, off, ver int64) error { return nil }
 
-func (l *NextFreeList) growFile(sz int64) error {
+func (l *NextFreelist) growFile(sz int64) error {
 	if sz <= l.flen {
 		return nil
 	}

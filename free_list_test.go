@@ -19,7 +19,7 @@ func TestDumpFreeList(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0 * Page)
-	fl := NewEverNextFreeList(b, Page)
+	fl := NewEverNextFreelist(b, Page)
 
 	off, err := fl.Alloc(1)
 	assert.NoError(t, err)
@@ -63,7 +63,7 @@ func TestFreeListAuto(t *testing.T) {
 	f0.meta = &treemeta{}
 	f1.meta = &treemeta{}
 
-	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, -1)
+	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page, -1)
 	pl.free = fl
 
 	var taken []int64
@@ -240,7 +240,7 @@ func BenchmarkFreeListVerInc(t *testing.B) {
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 
-	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, -1)
+	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page, -1)
 	pl.free = fl
 
 	var taken []int64
@@ -295,7 +295,7 @@ func BenchmarkFreeListVerConst(t *testing.B) {
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 
-	fl := NewTreeFreeList(b, f0, f1, 2*Page, Page, -1)
+	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page, -1)
 	pl.free = fl
 
 	var taken []int64
