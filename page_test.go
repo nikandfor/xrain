@@ -1,6 +1,7 @@
 package xrain
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -279,10 +280,10 @@ func testPageKeyCmpLast8(t *testing.T, pl PageLayout) {
 
 	assert.Equal(t, 3, pl.NKeys(loff))
 
-	assert.Equal(t, 1, pl.KeyCmp(loff, 0, []byte(nil)))
-	assert.Equal(t, -1, pl.KeyCmp(loff, 0, []byte("key_bbbb")))
-	assert.Equal(t, 0, pl.KeyCmp(loff, 1, []byte("key_bbbb")))
-	assert.Equal(t, 1, pl.KeyCmp(loff, 2, []byte("key_bbbb")))
+	assert.Equal(t, 1, bytes.Compare(pl.Key(loff, 0), []byte(nil)))
+	assert.Equal(t, -1, bytes.Compare(pl.Key(loff, 0), []byte("key_bbbb")))
+	assert.Equal(t, 0, bytes.Compare(pl.Key(loff, 1), []byte("key_bbbb")))
+	assert.Equal(t, 1, bytes.Compare(pl.Key(loff, 2), []byte("key_bbbb")))
 
 	assert.EqualValues(t, "key_cccc", pl.LastKey(loff))
 }

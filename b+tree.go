@@ -2,7 +2,6 @@ package xrain
 
 import (
 	"log"
-	"sort"
 )
 
 var checkTree func(t *Tree)
@@ -169,7 +168,7 @@ func (t *Tree) seek(st []keylink, k []byte) (_ []keylink, eq bool) {
 	for {
 		st = append(st, keylink(off))
 
-		i, eq = t.search(off, k)
+		i, eq = t.p.Search(off, k)
 		//	log.Printf("search %2x %q -> %x %v", off, k, i, eq)
 
 		if t.p.IsLeaf(off) {
@@ -228,7 +227,7 @@ func (t *Tree) step(st []keylink, k []byte, back bool) (_ []keylink) {
 			if back && k == nil {
 				i, eq = n, false
 			} else {
-				i, eq = t.search(off, k)
+				i, eq = t.p.Search(off, k)
 			}
 			//	log.Printf("search %4x %q -> %d/%d %v", off, k, i, n, eq)
 
@@ -413,14 +412,6 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 	}
 
 	return nil
-}
-
-func (t *Tree) search(off int64, k []byte) (int, bool) {
-	ln := t.p.NKeys(off)
-	i := sort.Search(ln, func(i int) bool {
-		return t.p.KeyCmp(off, i, k) >= 0
-	})
-	return i, i < ln && t.p.KeyCmp(off, i, k) == 0
 }
 
 func (l keylink) Off(mask int64) int64 {

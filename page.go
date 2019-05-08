@@ -3,6 +3,7 @@ package xrain
 import (
 	"bytes"
 	"encoding/binary"
+	"sort"
 )
 
 const NilPage = -1
@@ -15,8 +16,8 @@ type (
 		NKeys(p int64) int
 		IsLeaf(p int64) bool
 
+		Search(p int64, k []byte) (int, bool)
 		Key(p int64, i int) []byte
-		KeyCmp(p int64, i int, k []byte) int
 		LastKey(p int64) []byte
 
 		Value(p int64, i int) []byte
@@ -43,11 +44,11 @@ type (
 		meta *treemeta
 	}
 
-	KVLayout struct { // base [2]byte, keys [size]int16, data []byte
+	KVLayout struct { // base [16]byte, keys [size]int16, data []byte
 		BaseLayout
 	}
 
-	FixedLayout struct { // base [2]byte, _ [14]byte, keyval []{int64,int64}
+	FixedLayout struct { // base [16]byte, _ [14]byte, keyval []{int64,int64}
 		BaseLayout
 		k, v, kv, pm int
 		p            int64
@@ -203,20 +204,23 @@ func (l *FixedLayout) AllocRoot() (int64, error) {
 	return off, nil
 }
 
-func (l *FixedLayout) KeyCmp(off int64, i int, k []byte) (r int) {
-	if k == nil {
-		return 1
-	}
+func (l *FixedLayout) Search(off int64, k []byte) (i int, eq bool) {
+	l.b.Access(off, l.page, func(p []byte) {
+		ln := l.nkeys(p)
+		keycmp := func(i int) int {
+			v := l.v
+			if !l.isleaf(p) {
+				v = 8
+			}
+			s := 16 + i*(l.k+v)
 
-	l.b.Access(off, l.p, func(p []byte) {
-		v := l.v
-		if !l.isleaf(p) {
-			v = 8
+			return bytes.Compare(p[s:s+l.k], k)
 		}
-		s := 16 + i*(l.k+v)
-		r = bytes.Compare(p[s:s+l.k], k)
+		i = sort.Search(ln, func(i int) bool {
+			return keycmp(i) >= 0
+		})
+		eq = i < ln && keycmp(i) == 0
 	})
-
 	return
 }
 
