@@ -16,13 +16,13 @@ type (
 	Freelist interface {
 		Alloc(n int) (int64, error)
 		Free(n int, off, ver int64) error
-		SetVer(keep int64)
+		SetVer(ver, keep int64)
 	}
 
 	TreeFreelist struct {
 		keep   int64
 		b      Back
-		t0, t1 *Tree // get, put
+		t0, t1 Tree // get, put
 
 		last       []byte
 		page       int64
@@ -45,7 +45,7 @@ type (
 	}
 )
 
-func NewTreeFreelist(b Back, t0, t1 *Tree, next, page int64, keep int64) *TreeFreelist {
+func NewTreeFreelist(b Back, t0, t1 Tree, next, page int64) *TreeFreelist {
 	if t0 == t1 {
 		assert0(t0 != t1, "must be 2 distinct trees")
 	}
@@ -60,8 +60,6 @@ func NewTreeFreelist(b Back, t0, t1 *Tree, next, page int64, keep int64) *TreeFr
 		next: next,
 		flen: flen,
 	}
-
-	l.SetVer(keep)
 
 	return l
 }
@@ -79,7 +77,7 @@ func NewEverNextFreelist(b Back, page int64) *NextFreelist {
 	return l
 }
 
-func (l *TreeFreelist) SetVer(keep int64) {
+func (l *TreeFreelist) SetVer(ver, keep int64) {
 	l.keep = keep
 	l.exht = l.t0 == nil
 	l.last = nil
@@ -210,7 +208,7 @@ func (l *TreeFreelist) unlock() (err error) {
 	return nil
 }
 
-func (l *NextFreelist) SetVer(keep int64) {}
+func (l *NextFreelist) SetVer(ver, keep int64) {}
 
 func (l *NextFreelist) Alloc(n int) (off int64, err error) {
 	off = l.next

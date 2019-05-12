@@ -4,10 +4,20 @@ import (
 	"log"
 )
 
-var checkTree func(t *Tree)
+var checkTree func(t *FileTree)
 
 type (
-	Tree struct {
+	Tree interface {
+		Root() int64
+		Size() int
+		Put(k, v []byte) ([]byte, error)
+		Del(k []byte) ([]byte, error)
+		Get(k []byte) []byte
+		Next(k []byte) []byte
+		Prev(k []byte) []byte
+	}
+
+	FileTree struct {
 		p PageLayout
 
 		root int64
@@ -21,13 +31,13 @@ type (
 	keylink int64
 )
 
-func NewTree(p PageLayout, root, page int64) *Tree {
+func NewTree(p PageLayout, root, page int64) *FileTree {
 	mask := page
 	if mask&(mask-1) != 0 {
 		panic(mask)
 	}
 	mask--
-	t := &Tree{
+	t := &FileTree{
 		p:    p,
 		root: root,
 		mask: mask,
@@ -43,14 +53,18 @@ func NewTree(p PageLayout, root, page int64) *Tree {
 	return t
 }
 
-func (t *Tree) Size() int {
+func (t *FileTree) Size() int {
 	if t.meta == nil {
 		return 0
 	}
 	return int(t.meta.n)
 }
 
-func (t *Tree) Put(k, v []byte) (old []byte, err error) {
+func (t *FileTree) Root() int64 {
+	return t.root
+}
+
+func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 	st, eq := t.seek(nil, k)
 
 	//	log.Printf("root %x Put %x -> %x", t.root, k, v)
@@ -86,7 +100,7 @@ func (t *Tree) Put(k, v []byte) (old []byte, err error) {
 	return
 }
 
-func (t *Tree) Del(k []byte) (old []byte, err error) {
+func (t *FileTree) Del(k []byte) (old []byte, err error) {
 	st, eq := t.seek(nil, k)
 
 	//	log.Printf("root %x Del %x", t.root, k)
@@ -118,7 +132,7 @@ func (t *Tree) Del(k []byte) (old []byte, err error) {
 	return
 }
 
-func (t *Tree) Get(k []byte) (v []byte) {
+func (t *FileTree) Get(k []byte) (v []byte) {
 	st, eq := t.seek(nil, k)
 
 	if !eq {
@@ -132,7 +146,7 @@ func (t *Tree) Get(k []byte) (v []byte) {
 	return t.p.Value(off, i)
 }
 
-func (t *Tree) Next(k []byte) []byte {
+func (t *FileTree) Next(k []byte) []byte {
 	st := t.step(nil, k, false)
 	if st == nil {
 		return nil
@@ -149,7 +163,7 @@ func (t *Tree) Next(k []byte) []byte {
 	return next
 }
 
-func (t *Tree) Prev(k []byte) []byte {
+func (t *FileTree) Prev(k []byte) []byte {
 	st := t.step(nil, k, true)
 	if st == nil {
 		return nil
@@ -162,7 +176,7 @@ func (t *Tree) Prev(k []byte) []byte {
 	return t.p.Key(off, i)
 }
 
-func (t *Tree) seek(st []keylink, k []byte) (_ []keylink, eq bool) {
+func (t *FileTree) seek(st []keylink, k []byte) (_ []keylink, eq bool) {
 	off := t.root
 	var i, d int
 	for {
@@ -189,7 +203,7 @@ func (t *Tree) seek(st []keylink, k []byte) (_ []keylink, eq bool) {
 	return st, eq
 }
 
-func (t *Tree) step(st []keylink, k []byte, back bool) (_ []keylink) {
+func (t *FileTree) step(st []keylink, k []byte, back bool) (_ []keylink) {
 	off := t.root
 	mask := t.mask
 	var i, d int
@@ -261,7 +275,7 @@ func (t *Tree) step(st []keylink, k []byte, back bool) (_ []keylink) {
 	return st
 }
 
-func (t *Tree) out(s []keylink, l, r int64) (err error) {
+func (t *FileTree) out(s []keylink, l, r int64) (err error) {
 	mask := t.mask
 	d := len(s)
 	for d -= 2; d >= 0; d-- {
@@ -274,9 +288,6 @@ func (t *Tree) out(s []keylink, l, r int64) (err error) {
 		// rebalance if needed
 		if r == NilPage && t.p.NeedRebalance(l) {
 			i, l, r = t.p.Siblings(off, i, l)
-			if i == -1 {
-				panic(off)
-			}
 			if r != NilPage {
 				l, r, err = t.p.Rebalance(l, r)
 				if err != nil {

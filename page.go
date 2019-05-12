@@ -431,7 +431,7 @@ func (l *FixedLayout) NeedRebalance(off int64) (r bool) {
 	l.b.Access(off, l.p, func(p []byte) {
 		n := l.nkeys(p)
 		end := 16 + n*16
-		r = end < len(p)/2
+		r = end < len(p)*2/5
 	})
 	return
 }

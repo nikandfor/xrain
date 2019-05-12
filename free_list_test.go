@@ -45,7 +45,7 @@ func TestFreelistAuto(t *testing.T) {
 	defer func() {
 		checkTree = nil
 	}()
-	checkTree = func(t *Tree) {
+	checkTree = func(t *FileTree) {
 		//	log.Printf("tree checked")
 	}
 
@@ -63,7 +63,7 @@ func TestFreelistAuto(t *testing.T) {
 	f0.meta = &treemeta{}
 	f1.meta = &treemeta{}
 
-	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page, -1)
+	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page)
 	pl.free = fl
 
 	var taken []int64
@@ -124,8 +124,8 @@ func TestFreelistAuto(t *testing.T) {
 			}
 		}
 
-		add(fl.t0.root)
-		add(fl.t1.root)
+		add(fl.t0.Root())
+		add(fl.t1.Root())
 
 		for p := range used {
 			if _, ok := recl[p]; ok {
@@ -151,12 +151,12 @@ func TestFreelistAuto(t *testing.T) {
 				ver := basever + int64(i)
 
 				pl.SetVer(ver)
-				fl.SetVer(ver - 1)
+				fl.SetVer(ver, ver-1)
 
 				available, available2 := 0, 0
 				nextwas := fl.next
 				{
-					calc := func(t *Tree, c *int) {
+					calc := func(t Tree, c *int) {
 						for k := t.Next(nil); k != nil; k = t.Next(k) {
 							v := t.Get(k)
 							ver := int64(binary.BigEndian.Uint64(v))
@@ -240,7 +240,7 @@ func BenchmarkFreelistVerInc(t *testing.B) {
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 
-	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page, -1)
+	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page)
 	pl.free = fl
 
 	var taken []int64
@@ -276,7 +276,7 @@ func BenchmarkFreelistVerInc(t *testing.B) {
 	for i := 0; i < t.N; i++ {
 		ver := int64(i)
 
-		fl.SetVer(ver - 1)
+		fl.SetVer(ver, ver-1)
 
 		if (i+1)%3 == 0 {
 			free(ver)
@@ -295,7 +295,7 @@ func BenchmarkFreelistVerConst(t *testing.B) {
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
 
-	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page, -1)
+	fl := NewTreeFreelist(b, f0, f1, 2*Page, Page)
 	pl.free = fl
 
 	var taken []int64

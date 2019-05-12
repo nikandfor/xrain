@@ -381,7 +381,7 @@ func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl 
 	if alloc {
 		(*ver)++
 		pl.SetVer(*ver)
-		fl.SetVer(*ver - 1)
+		fl.SetVer(*ver, *ver-1)
 	}
 
 	l, r, err := pl.Rebalance(loff, roff)

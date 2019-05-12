@@ -33,7 +33,7 @@ type (
 
 	Tx struct {
 		d        *DB
-		t        *Tree
+		t        Tree
 		writable bool
 	}
 
@@ -135,7 +135,8 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	f0.meta = &rp.free0meta
 	f1.meta = &rp.free1meta
 
-	fl := NewTreeFreelist(d.b, f0, f1, rp.next, d.page, d.keep)
+	fl := NewTreeFreelist(d.b, f0, f1, rp.next, d.page)
+	fl.SetVer(ver, d.keep)
 	fpl0.SetFreelist(fl)
 	fpl1.SetFreelist(fl)
 
