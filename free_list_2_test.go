@@ -196,8 +196,8 @@ func TestFreelist2Alloc2(t *testing.T) {
 
 func TestFreelist2Auto(t *testing.T) {
 	const Page = 0x100
-	const N, M = 30, 4
-	const dumpOnce, dumpEach = false, true
+	const N, M = 1000, 4
+	const prOnce, prEach, prCmd = true, true, false
 
 	rnd := rand.New(rand.NewSource(0))
 
@@ -214,7 +214,7 @@ func TestFreelist2Auto(t *testing.T) {
 	}
 	var alloc []mem
 
-	check := func() {
+	check := func(pr bool) {
 		var tree, free, used int64
 		pages := make([]byte, fl.next/Page)
 		sizes := make([]byte, fl.next/Page)
@@ -277,7 +277,7 @@ func TestFreelist2Auto(t *testing.T) {
 			copy(sizes[m.off/Page:], fmt.Sprintf("%x", 1<<nsize(m.n)))
 		}
 
-		if dumpEach {
+		if pr {
 			log.Printf("in use: %x", alloc)
 			log.Printf("dump root %x next %x  ver %x %x", tr.root, fl.next, fl.ver, fl.keep)
 			log.Printf("%s <- %x = %x * %x", pages, fl.next, fl.next/Page, Page)
@@ -285,22 +285,25 @@ func TestFreelist2Auto(t *testing.T) {
 			//	log.Printf("%v", dumpFile(pl))
 		}
 
+		frac := float64(free) / float64(fl.next/Page)
 		if tree+free+used != fl.next/Page {
-			t.Errorf("tree %x + free %x + used %x != file size %x", tree, free, used, fl.next/Page)
-		} else if dumpEach {
-			log.Printf("tree %x + free %x + used %x == file size %x", tree, free, used, fl.next/Page)
+			t.Errorf("tree %x + free %x (%.2f) + used %x != file size %x", tree, free, frac, used, fl.next/Page)
+		} else if pr {
+			log.Printf("tree %x + free %x (%.2f) + used %x == file size %x", tree, free, frac, used, fl.next/Page)
 		}
 	}
 
-	check()
+	check(prEach)
 
-	for ver := int64(1); ver < N; ver++ {
+	for ver := int64(1); ver <= N; ver++ {
 		pl.SetVer(ver)
 		fl.SetVer(ver, ver-1)
 
-		if rnd.Intn(2) == 0 {
+		if rnd.Intn(3) == 0 {
 			n := rnd.Intn(1<<M-1) + 1
-			log.Printf("alloc%% %d     - ver %d", n, ver)
+			if prCmd {
+				log.Printf("alloc%% %d     - ver %d", n, ver)
+			}
 
 			off, err := fl.Alloc(n)
 			if !assert.NoError(t, err) {
@@ -308,7 +311,7 @@ func TestFreelist2Auto(t *testing.T) {
 			}
 			alloc = append(alloc, mem{off: off, n: n})
 
-			log.Printf("alloced %d at %x, next: %x", n, off, fl.next)
+			//	log.Printf("alloced %d at %x, next: %x", n, off, fl.next)
 			b.Access(off, 0x10, func(p []byte) {
 				pl.setver(p, ver)
 				pl.setextended(p, n)
@@ -317,7 +320,9 @@ func TestFreelist2Auto(t *testing.T) {
 		} else if len(alloc) != 0 {
 			i := rand.Intn(len(alloc))
 			m := alloc[i]
-			log.Printf("free %% %d %x  - ver %d", m.n, m.off, ver)
+			if prCmd {
+				log.Printf("free %% %d %x  - ver %d", m.n, m.off, ver)
+			}
 
 			var ver int64
 			b.Access(m.off, 0x10, func(p []byte) {
@@ -335,15 +340,12 @@ func TestFreelist2Auto(t *testing.T) {
 			alloc = alloc[:len(alloc)-1]
 		}
 
-		check()
+		check(prEach)
 
 		if t.Failed() {
 			break
 		}
 	}
 
-	if dumpOnce {
-		log.Printf("in use: %x", alloc)
-		log.Printf("dump root %x next %x\n%v", tr.root, fl.next, dumpFile(pl))
-	}
+	check(prOnce && !prEach)
 }

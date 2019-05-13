@@ -1,9 +1,7 @@
 package xrain
 
 import (
-	"bytes"
 	"encoding/binary"
-	"log"
 )
 
 type (
@@ -16,7 +14,7 @@ type (
 
 		next, flen int64
 
-		last []byte
+		//	last []byte
 
 		deferred []kv2
 		lock     bool
@@ -44,26 +42,59 @@ func NewFreelist2(b Back, t Tree, next, page int64) *Freelist2 {
 }
 
 func (l *Freelist2) Alloc(n int) (off int64, err error) {
+	//	log.Printf("alloc: %2x       ver %d/%d next %x  def %x", n, l.ver, l.keep, l.next, l.deferred)
 	//	defer func() {
-	//		log.Printf("alloc: %d %x  ver %d/%d next %x", n, off, l.ver, l.keep, l.next)
+	//		log.Printf("alloc: %2x %4x  ver %d/%d next %x", n, off, l.ver, l.keep, l.next)
 	//	}()
 
+	nsize := nsize(n)
+	used := map[int64]struct{}{}
+	for i := len(l.deferred) - 1; i >= 0; i-- {
+		kv := l.deferred[i]
+		if kv.v == 0 {
+			used[kv.k] = struct{}{}
+			continue
+		}
+		if _, ok := used[kv.k]; ok {
+			continue
+		}
+		if kv.v != l.ver && kv.v >= l.keep {
+			continue
+		}
+
+		size := uint(kv.k & l.mask)
+		if size < nsize {
+			continue
+		}
+		if size == nsize {
+			//	log.Printf("asquired %d found %x %x  ver %x/%x def %x", n, kv.k, kv.v, l.ver, l.keep, l.deferred)
+			l.deferOp(kv.k, 0)
+			return kv.k &^ l.mask, nil
+		}
+	}
+
+	var last []byte
 next:
-	l.last = l.t.Next(l.last)
-	if l.last == nil {
+	last = l.t.Next(last)
+	if last == nil {
 		return l.allocGrow(n)
 	}
 
-	off = int64(binary.BigEndian.Uint64(l.last))
+	off = int64(binary.BigEndian.Uint64(last))
 
-	nsize := nsize(n)
 	size := uint(off & l.mask)
 	if size < nsize {
 		goto next
 	}
 
-	key := make([]byte, len(l.last))
-	copy(key, l.last)
+	for _, kv := range l.deferred {
+		if kv.v == 0 && kv.k == off {
+			goto next
+		}
+	}
+
+	key := make([]byte, len(last))
+	copy(key, last)
 
 	vbytes := l.t.Get(key)
 	ver := int64(binary.BigEndian.Uint64(vbytes))
@@ -77,7 +108,7 @@ next:
 
 	ps := l.page << nsize
 	for nsize != size {
-		log.Printf("took %x %d  put back %x %d", off, size, off+ps, nsize)
+		//	log.Printf("took %x %d  put back %x %d", off, size, off+ps, nsize)
 		l.deferOp(off+ps|int64(nsize), ver)
 		ps *= 2
 		nsize++
@@ -130,8 +161,8 @@ func (l *Freelist2) Free(n int, off, ver int64) (err error) {
 
 	var buf [8]byte
 
-more:
 	sz := nsize(n)
+more:
 	ps := l.page << sz
 	sib := off ^ ps
 
@@ -142,22 +173,36 @@ more:
 	binary.BigEndian.PutUint64(buf[:8], uint64(sib|int64(sz)))
 
 	//	log.Printf("compare %x %x", buf[:8], l.last)
-	if bytes.Compare(buf[:8], l.last) <= 0 {
-		goto fin
-	}
-	for _, kv := range l.deferred {
-		if kv.v == 0 && kv.k == sib|int64(sz) {
-			//	log.Printf("THAT HAPPENNED <--------------------- kv %x  %x %x  root %x def %x\n%v", kv, off, sib, l.t.(*FileTree).root, l.deferred, dumpFile(l.t.(*FileTree).p))
+	//	if bytes.Compare(buf[:8], l.last) <= 0 {
+	//		goto fin
+	//	}
+	for i := len(l.deferred) - 1; i >= 0; i-- {
+		kv := l.deferred[i]
+		if kv.k != sib|int64(sz) {
+			continue
+		}
+		if kv.v == 0 {
 			goto fin
 		}
+
+		//	log.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), l.deferred)
+		l.deferOp(sib|int64(sz), 0)
+
+		sz++
+		off &= sib
+		if kv.v < ver {
+			ver = kv.v
+		}
+
+		goto more
 	}
 
 	if vbytes := l.t.Get(buf[:8]); vbytes != nil {
 		v := int64(binary.BigEndian.Uint64(vbytes))
-		log.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), l.deferred)
+		//	log.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), l.deferred)
 		l.deferOp(sib|int64(sz), 0)
 
-		n = 1 << (sz + 1)
+		sz++
 		off &= sib
 		if v < ver {
 			ver = v
@@ -167,7 +212,7 @@ more:
 	}
 
 fin:
-	log.Printf("free   merged %x n %d  def %x", off, n, l.deferred)
+	//	log.Printf("free   merged %4x n %d  last %16x def %x", off, n, l.last, l.deferred)
 	l.deferOp(off|int64(sz), ver)
 
 	err = l.unlock()
@@ -177,7 +222,7 @@ fin:
 
 func (l *Freelist2) SetVer(ver, keep int64) {
 	l.ver, l.keep = ver, keep
-	l.last = nil
+	//	l.last = nil
 }
 
 func (l *Freelist2) unlock() (err error) {
@@ -208,6 +253,7 @@ func (l *Freelist2) unlock() (err error) {
 
 	l.deferred = l.deferred[:0]
 	l.lock = false
+	//	l.last = nil
 
 	return
 }
