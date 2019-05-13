@@ -8,7 +8,6 @@ var checkTree func(t *FileTree)
 
 type (
 	Tree interface {
-		Root() int64
 		Size() int
 		Put(k, v []byte) ([]byte, error)
 		Del(k []byte) ([]byte, error)

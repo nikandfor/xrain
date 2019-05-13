@@ -124,8 +124,8 @@ func TestFreelistAuto(t *testing.T) {
 			}
 		}
 
-		add(fl.t0.Root())
-		add(fl.t1.Root())
+		add(fl.t0.(*FileTree).root)
+		add(fl.t1.(*FileTree).root)
 
 		for p := range used {
 			if _, ok := recl[p]; ok {
