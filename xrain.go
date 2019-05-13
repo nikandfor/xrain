@@ -12,6 +12,10 @@ import (
 	"sync"
 )
 
+const (
+	Version = "000"
+)
+
 var (
 	DefaultPageSize int64 = 0x1000 // 4 KiB
 )
@@ -220,7 +224,7 @@ func (d *DB) initEmpty() (err error) {
 		return
 	}
 
-	h0 := fmt.Sprintf("xrain000%7x\n", d.page)
+	h0 := fmt.Sprintf("xrain%3s%7x\n", Version, d.page)
 	if len(h0) != 16 {
 		panic(len(h0))
 	}

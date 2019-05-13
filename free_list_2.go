@@ -7,7 +7,7 @@ import (
 type (
 	Freelist2 struct {
 		b Back
-		t Tree // off|size -> ver; size :== log(n*page)-1
+		t Tree // off|size -> ver; size ::= log(n)
 
 		page, mask int64
 		ver, keep  int64

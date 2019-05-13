@@ -59,10 +59,6 @@ func (t *FileTree) Size() int {
 	return int(t.meta.n)
 }
 
-func (t *FileTree) Root() int64 {
-	return t.root
-}
-
 func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 	st, eq := t.seek(nil, k)
 

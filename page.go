@@ -205,7 +205,7 @@ func (l *FixedLayout) AllocRoot() (int64, error) {
 }
 
 func (l *FixedLayout) Search(off int64, k []byte) (i int, eq bool) {
-	l.b.Access(off, l.page, func(p []byte) {
+	l.b.Access(off, l.p, func(p []byte) {
 		ln := l.nkeys(p)
 		keycmp := func(i int) int {
 			v := l.v
