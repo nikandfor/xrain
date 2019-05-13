@@ -9,8 +9,8 @@ var checkTree func(t *FileTree)
 type (
 	Tree interface {
 		Size() int
-		Put(k, v []byte) ([]byte, error)
-		Del(k []byte) ([]byte, error)
+		Put(k, v []byte) (old []byte, err error)
+		Del(k []byte) (old []byte, err error)
 		Get(k []byte) []byte
 		Next(k []byte) []byte
 		Prev(k []byte) []byte

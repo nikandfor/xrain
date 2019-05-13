@@ -2,8 +2,6 @@ package xrain
 
 import "sync"
 
-const Mb = 1 << 30
-
 type (
 	Back interface {
 		Access(off, len int64, f func(p []byte))

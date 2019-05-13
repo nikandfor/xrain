@@ -33,7 +33,7 @@ type (
 		lock bool
 	}
 
-	NextFreelist struct {
+	GrowFreelist struct {
 		b          Back
 		page       int64
 		next, flen int64
@@ -64,10 +64,10 @@ func NewTreeFreelist(b Back, t0, t1 Tree, next, page int64) *TreeFreelist {
 	return l
 }
 
-func NewEverNextFreelist(b Back, page int64) *NextFreelist {
+func NewEverNextFreelist(b Back, page int64) *GrowFreelist {
 	flen := b.Size()
 
-	l := &NextFreelist{
+	l := &GrowFreelist{
 		b:    b,
 		page: page,
 		next: flen,
@@ -208,9 +208,9 @@ func (l *TreeFreelist) unlock() (err error) {
 	return nil
 }
 
-func (l *NextFreelist) SetVer(ver, keep int64) {}
+func (l *GrowFreelist) SetVer(ver, keep int64) {}
 
-func (l *NextFreelist) Alloc(n int) (off int64, err error) {
+func (l *GrowFreelist) Alloc(n int) (off int64, err error) {
 	off = l.next
 	size := int64(n) * l.page
 	l.flen, err = growFile(l.b, l.page, off+size)
@@ -222,7 +222,7 @@ func (l *NextFreelist) Alloc(n int) (off int64, err error) {
 	return off, nil
 }
 
-func (l *NextFreelist) Free(n int, off, ver int64) error { return nil }
+func (l *GrowFreelist) Free(n int, off, ver int64) error { return nil }
 
 func growFile(b Back, page, sz int64) (flen int64, err error) {
 	flen = b.Size()

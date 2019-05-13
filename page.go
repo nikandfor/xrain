@@ -16,7 +16,7 @@ type (
 		NKeys(p int64) int
 		IsLeaf(p int64) bool
 
-		Search(p int64, k []byte) (int, bool)
+		Search(p int64, k []byte) (i int, eq bool)
 		Key(p int64, i int) []byte
 		LastKey(p int64) []byte
 
@@ -29,7 +29,7 @@ type (
 
 		NeedRebalance(p int64) bool
 		Siblings(p int64, i int, pi int64) (li int, l, r int64)
-		Rebalance(l, r int64) (l_, r_ int64, _ error)
+		Rebalance(l, r int64) (nl, nr int64, _ error)
 
 		SetVer(ver int64)
 		SetFreelist(fl Freelist)

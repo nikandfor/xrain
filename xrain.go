@@ -12,9 +12,7 @@ import (
 	"sync"
 )
 
-const (
-	Version = "000"
-)
+const Version = "000"
 
 var (
 	DefaultPageSize int64 = 0x1000 // 4 KiB
