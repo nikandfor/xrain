@@ -14,8 +14,6 @@ type (
 
 		next, flen int64
 
-		//	last []byte
-
 		deferred []kv2
 		lock     bool
 	}
@@ -172,10 +170,6 @@ more:
 
 	binary.BigEndian.PutUint64(buf[:8], uint64(sib|int64(sz)))
 
-	//	log.Printf("compare %x %x", buf[:8], l.last)
-	//	if bytes.Compare(buf[:8], l.last) <= 0 {
-	//		goto fin
-	//	}
 	for i := len(l.deferred) - 1; i >= 0; i-- {
 		kv := l.deferred[i]
 		if kv.k != sib|int64(sz) {
@@ -222,7 +216,6 @@ fin:
 
 func (l *Freelist2) SetVer(ver, keep int64) {
 	l.ver, l.keep = ver, keep
-	//	l.last = nil
 }
 
 func (l *Freelist2) unlock() (err error) {
@@ -253,7 +246,57 @@ func (l *Freelist2) unlock() (err error) {
 
 	l.deferred = l.deferred[:0]
 	l.lock = false
-	//	l.last = nil
+
+	err = l.shrinkFile()
+
+	return
+}
+
+func (l *Freelist2) shrinkFile() (err error) {
+	fend := l.next
+
+	for {
+		last := l.t.Prev(nil)
+		if last == nil {
+			break
+		}
+
+		bst := int64(binary.BigEndian.Uint64(last))
+		bend := bst&^l.mask + l.page<<uint(bst&l.mask)
+
+		//	log.Printf("check last block %x (%x) of %x", bst, bend, fend)
+
+		if bend != fend {
+			break
+		}
+
+		vbytes := l.t.Get(last)
+		ver := int64(binary.BigEndian.Uint64(vbytes))
+		if ver >= l.keep && ver != l.ver {
+			break
+		}
+
+		_, err = l.t.Del(last)
+		if err != nil {
+			return
+		}
+
+		fend = bst &^ l.mask
+	}
+
+	if fend == l.next {
+		return
+	}
+
+	err = l.b.Truncate(fend)
+	if err != nil {
+		return
+	}
+
+	//	log.Printf("file shrunk %x <- %x", fend, l.next)
+
+	l.next = fend
+	l.flen = fend
 
 	return
 }

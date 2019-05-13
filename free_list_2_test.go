@@ -196,8 +196,8 @@ func TestFreelist2Alloc2(t *testing.T) {
 
 func TestFreelist2Auto(t *testing.T) {
 	const Page = 0x100
-	const N, M = 1000, 4
-	const prOnce, prEach, prCmd = true, true, false
+	const N, M = 1000, 6
+	const prOnce, prEach, prCmd = true, false, false
 
 	rnd := rand.New(rand.NewSource(0))
 
@@ -258,7 +258,8 @@ func TestFreelist2Auto(t *testing.T) {
 
 			i := 0
 			for ; i < 1<<size; i++ {
-				pages[int(off/Page)+i] = 'f'
+				idx := int(off/Page) + i
+				pages[idx] = 'f'
 			}
 			copy(sizes[off/Page:], fmt.Sprintf("%x", 1<<size))
 		}
