@@ -70,7 +70,7 @@ func TestFreelist2AllowGrow1(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, 0, nil)
+	pl := NewFixedLayout(b, Page, nil)
 	tr := NewTree(pl, 0, Page)
 	fl := NewFreelist2(b, tr, Page, Page)
 
@@ -87,7 +87,7 @@ func TestFreelist2AllowGrow2(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, 0, nil)
+	pl := NewFixedLayout(b, Page, nil)
 	tr := NewTree(pl, 0, Page)
 	fl := NewFreelist2(b, tr, Page, Page)
 
@@ -112,7 +112,7 @@ func TestFreelist2AllocPow(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, 0, nil)
+	pl := NewFixedLayout(b, Page, nil)
 	tr := NewTree(pl, 0, Page)
 	fl := NewFreelist2(b, tr, Page, Page)
 
@@ -158,7 +158,7 @@ func TestFreelist2Alloc2(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, 0, nil)
+	pl := NewFixedLayout(b, Page, nil)
 	tr := NewTree(pl, 0, Page)
 	fl := NewFreelist2(b, tr, Page, Page)
 
@@ -202,7 +202,7 @@ func TestFreelist2Auto(t *testing.T) {
 	rnd := rand.New(rand.NewSource(0))
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, 0, nil)
+	pl := NewFixedLayout(b, Page, nil)
 	tr := NewTree(pl, 0, Page)
 	fl := NewFreelist2(b, tr, Page, Page)
 

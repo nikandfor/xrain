@@ -96,7 +96,8 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	rp := d.root[ver%2]
 	d.mu.Unlock()
 
-	kvl := NewFixedLayout(d.b, d.page, ver, nil)
+	kvl := NewFixedLayout(d.b, d.page, nil)
+	kvl.SetVer(ver)
 
 	t := NewTree(kvl, rp.data, d.page)
 	t.meta = &rp.datameta
@@ -126,9 +127,11 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 
 	d.mu.Unlock()
 
-	fpl0 := NewFixedLayout(d.b, d.page, ver, nil)
+	fpl0 := NewFixedLayout(d.b, d.page, nil)
+	fpl0.SetVer(ver)
 	fpl0.meta = &rp.free0meta
-	fpl1 := NewFixedLayout(d.b, d.page, ver, nil)
+	fpl1 := NewFixedLayout(d.b, d.page, nil)
+	fpl0.SetVer(ver)
 	fpl1.meta = &rp.free0meta
 
 	f0 := NewTree(fpl0, rp.free0, d.page)
@@ -142,7 +145,8 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	fpl0.SetFreelist(fl)
 	fpl1.SetFreelist(fl)
 
-	kvl := NewFixedLayout(d.b, d.page, ver, fl)
+	kvl := NewFixedLayout(d.b, d.page, fl)
+	kvl.SetVer(ver)
 	kvl.meta = &rp.datameta
 
 	t := NewTree(kvl, rp.data, d.page)

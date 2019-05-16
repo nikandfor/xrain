@@ -40,7 +40,7 @@ func TestXRainSmoke(t *testing.T) {
 	const Page = 0x100
 
 	b := NewMemBack(0)
-	kvl := NewFixedLayout(b, Page, 0, nil)
+	kvl := NewFixedLayout(b, Page, nil)
 
 	db, err := NewDB(b, &Config{PageSize: Page})
 	assert.NoError(t, err)

@@ -56,7 +56,7 @@ func TestFreelistAuto(t *testing.T) {
 	)
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, nil)
+	pl := NewFixedLayout(b, Page, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
@@ -235,7 +235,7 @@ func BenchmarkFreelistVerInc(t *testing.B) {
 	const Page = 0x100
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, nil)
+	pl := NewFixedLayout(b, Page, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)
@@ -290,7 +290,7 @@ func BenchmarkFreelistVerConst(t *testing.B) {
 	const Page = 0x100
 
 	b := NewMemBack(2 * Page)
-	pl := NewFixedLayout(b, Page, 0, nil)
+	pl := NewFixedLayout(b, Page, nil)
 
 	f0 := NewTree(pl, 0, Page)
 	f1 := NewTree(pl, Page, Page)

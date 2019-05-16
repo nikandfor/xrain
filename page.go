@@ -55,12 +55,11 @@ type (
 	}
 )
 
-func NewFixedLayout(b Back, page, ver int64, fl Freelist) *FixedLayout {
+func NewFixedLayout(b Back, page int64, fl Freelist) *FixedLayout {
 	return &FixedLayout{
 		BaseLayout: BaseLayout{
 			b:    b,
 			page: page,
-			ver:  ver,
 			free: fl,
 		},
 		k:  8,
