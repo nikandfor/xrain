@@ -117,7 +117,6 @@ func TestFreelist2AllocPow(t *testing.T) {
 	fl := NewFreelist2(b, tr, Page, Page)
 
 	pl.SetFreelist(fl)
-	pl.SetVer(0) // do not realloc tree page
 	fl.SetVer(1, 0)
 
 	off, err := fl.Alloc(8)
@@ -127,9 +126,11 @@ func TestFreelist2AllocPow(t *testing.T) {
 	next := tr.Next(nil)
 	assert.NotNil(t, next, "non-nil freelist expected")
 
+	fl.SetVer(3, 2)
+
 	off, err = fl.Alloc(1)
 	assert.NoError(t, err)
-	assert.Equal(t, int64(1*Page), off, "%x != %x", 1*Page, off)
+	assert.Equal(t, int64(0*Page), off, "%x != %x", 0*Page, off)
 
 	off, err = fl.Alloc(2)
 	assert.NoError(t, err)
@@ -138,6 +139,9 @@ func TestFreelist2AllocPow(t *testing.T) {
 	off, err = fl.Alloc(2)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(4*Page), off, "%x != %x", 4*Page, off)
+
+	dump, psz := dumpPage(pl, tr.root)
+	log.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
 
 	off, err = fl.Alloc(4)
 	assert.NoError(t, err)
@@ -150,7 +154,7 @@ func TestFreelist2AllocPow(t *testing.T) {
 	next = tr.Next(nil)
 	assert.Nil(t, next, "nil freelist expected")
 
-	dump, psz := dumpPage(pl, tr.root)
+	dump, psz = dumpPage(pl, tr.root)
 	log.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
 }
 
@@ -163,16 +167,17 @@ func TestFreelist2Alloc2(t *testing.T) {
 	fl := NewFreelist2(b, tr, Page, Page)
 
 	pl.SetFreelist(fl)
-	pl.SetVer(0) // do not realloc tree page
 	fl.SetVer(1, 0)
 
 	off, err := fl.Alloc(5)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(8*Page), off, "%x != %x", 8*Page, off)
 
+	fl.SetVer(3, 2)
+
 	off, err = fl.Alloc(1)
 	assert.NoError(t, err)
-	assert.Equal(t, int64(1*Page), off, "%x != %x", 1*Page, off)
+	assert.Equal(t, int64(0*Page), off, "%x != %x", 0*Page, off)
 
 	off, err = fl.Alloc(2)
 	assert.NoError(t, err)

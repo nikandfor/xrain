@@ -11,10 +11,9 @@ func TestTreeSmall(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(Page)
-	fl := NewEverNextFreelist(b, Page)
+	fl := NewEverGrowFreelist(b, Page, 0)
 	pl := NewFixedLayout(b, Page, fl)
 	tr := NewTree(pl, 0, Page)
-	tr.meta = &treemeta{depth: 1}
 
 	v, err := tr.Put([]byte("key_aaaa"), []byte("value_aa"))
 	assert.NoError(t, err)
@@ -49,7 +48,7 @@ func TestTreeSmall(t *testing.T) {
 	v = tr.Get([]byte("key_aaaa"))
 	assert.Nil(t, v)
 
-	assert.EqualValues(t, 1, tr.meta.depth)
+	assert.EqualValues(t, 0, tr.depth)
 }
 
 func TestTreeIterator(t *testing.T) {
@@ -60,10 +59,9 @@ func TestTreeIterator(t *testing.T) {
 	)
 
 	b := NewMemBack(Page)
-	fl := NewEverNextFreelist(b, Page)
+	fl := NewEverGrowFreelist(b, Page, 0)
 	pl := NewFixedLayout(b, Page, fl)
 	tr := NewTree(pl, 0, Page)
-	tr.meta = &treemeta{depth: 1}
 
 	for i := 0; i < N; i++ {
 		q := ((i + 1) * Prime) % N
@@ -109,10 +107,9 @@ func TestTreeBig(t *testing.T) {
 	)
 
 	b := NewMemBack(Page)
-	fl := NewEverNextFreelist(b, Page)
+	fl := NewEverGrowFreelist(b, Page, 0)
 	pl := NewFixedLayout(b, Page, fl)
 	tr := NewTree(pl, 0, Page)
-	tr.meta = &treemeta{depth: 1}
 
 	for i := 0; i < 2*N; i++ {
 		q := ((i + 1) * Prime) % N

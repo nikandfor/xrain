@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc64"
 	"log"
 	"path"
 	"runtime"
@@ -16,19 +17,37 @@ const Version = "000"
 
 var (
 	DefaultPageSize int64 = 0x1000 // 4 KiB
+
+	CRCTable = crc64.MakeTable(crc64.ECMA)
+
+	ErrPageChecksum = errors.New("page checksum mismatch")
 )
+
+/*
+	Root page layout
+00: xrainVVVPPPPPPP\n // VVV - Version, PPPPPPP - page size in hex
+10: <crc64> <page>
+20: <ver>   _
+30: <freelist>
+xx: <tree>
+*/
 
 type (
 	DB struct {
 		b  Back
+		fl Freelist
 		pl PageLayout
+		tr Tree
 
-		page int64
+		conf *Config
+
+		newtree func(pl PageLayout, root, page int64) Tree
+		page    int64
+		last    int64
 
 		mu   sync.Mutex
 		ver  int64
 		keep int64
-		root [2]rootpage
 
 		wmu sync.Mutex
 	}
@@ -41,23 +60,10 @@ type (
 
 	Config struct {
 		PageSize int64
-	}
 
-	rootpage struct {
-		data         int64
-		free0, free1 int64
-		next         int64
-		datameta     treemeta
-		free0meta    treemeta
-		free1meta    treemeta
-	}
-
-	treemeta struct {
-		n        int64
-		depth    byte
-		_        [3]byte
-		pages    int32
-		datasize int64
+		Freelist   Freelist
+		PageLayout PageLayout
+		NewTree    func(pl PageLayout, root, page int64) Tree
 	}
 )
 
@@ -76,15 +82,17 @@ func NewDB(b Back, c *Config) (*DB, error) {
 			}
 			d.page = c.PageSize
 		}
+		d.conf = c
 	}
 
+	var err error
 	if b.Size() == 0 {
-		err := d.initEmpty()
-		if err != nil {
-			return nil, err
-		}
+		err = d.initEmpty()
 	} else {
-		d.initExisting()
+		err = d.initExisting()
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	return d, nil
@@ -92,26 +100,15 @@ func NewDB(b Back, c *Config) (*DB, error) {
 
 func (d *DB) View(f func(tx *Tx) error) error {
 	d.mu.Lock()
-	ver := d.ver
-	rp := d.root[ver%2]
+	root := d.last
 	d.mu.Unlock()
 
-	kvl := NewFixedLayout(d.b, d.page, nil)
-	kvl.SetVer(ver)
-
-	t := NewTree(kvl, rp.data, d.page)
-	t.meta = &rp.datameta
-
 	tx := &Tx{
-		t: t,
+		d: d,
+		t: d.newtree(d.pl, root, d.page),
 	}
 
-	err := f(tx)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return f(tx)
 }
 
 func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
@@ -119,41 +116,16 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	d.wmu.Lock()
 
 	d.mu.Lock()
-
-	ver := d.ver + 1
-	rp := &d.root[ver%2]
-
-	*rp = d.root[(ver-1)%2]
-
+	ver, keep := d.ver, d.keep
 	d.mu.Unlock()
+	ver++
 
-	fpl0 := NewFixedLayout(d.b, d.page, nil)
-	fpl0.SetVer(ver)
-	fpl0.meta = &rp.free0meta
-	fpl1 := NewFixedLayout(d.b, d.page, nil)
-	fpl0.SetVer(ver)
-	fpl1.meta = &rp.free0meta
-
-	f0 := NewTree(fpl0, rp.free0, d.page)
-	f1 := NewTree(fpl1, rp.free1, d.page)
-
-	f0.meta = &rp.free0meta
-	f1.meta = &rp.free1meta
-
-	fl := NewTreeFreelist(d.b, f0, f1, rp.next, d.page)
-	fl.SetVer(ver, d.keep)
-	fpl0.SetFreelist(fl)
-	fpl1.SetFreelist(fl)
-
-	kvl := NewFixedLayout(d.b, d.page, fl)
-	kvl.SetVer(ver)
-	kvl.meta = &rp.datameta
-
-	t := NewTree(kvl, rp.data, d.page)
-	t.meta = &rp.datameta
+	d.fl.SetVer(ver, keep)
+	d.tr.SetVer(ver)
 
 	tx := &Tx{
-		t:        t,
+		d:        d,
+		t:        d.tr,
 		writable: true,
 	}
 
@@ -162,58 +134,63 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 		return err
 	}
 
-	rp.data = t.root
-	rp.free0 = f0.root
-	rp.free1 = f1.root
-	rp.next = fl.next
-
 	d.writeRoot(ver)
-
-	err = d.b.Sync()
-	if err != nil {
-		return err
-	}
 
 	d.mu.Lock()
 	d.ver++
+	d.last = tx.t.Root()
 	d.mu.Unlock()
 
 	return nil
 }
 
 func (d *DB) Update(f func(tx *Tx) error) error {
-	return nil
+	return d.UpdateNoBatching(f)
 }
 
 func (d *DB) writeRoot(ver int64) {
 	n := ver % 2
-	rp := &d.root[n]
 
 	d.b.Access(n*d.page, d.page, func(p []byte) {
-		s := 0x10
-		binary.BigEndian.PutUint64(p[s:], uint64(d.page))
-		s += 0x8
-		binary.BigEndian.PutUint64(p[s:], uint64(ver))
-		s += 0x8
-		binary.BigEndian.PutUint64(p[s:], uint64(rp.next))
-		s += 0x8
-		binary.BigEndian.PutUint64(p[s:], uint64(rp.data))
-		s += 0x8
-		binary.BigEndian.PutUint64(p[s:], uint64(rp.free0))
-		s += 0x8
-		binary.BigEndian.PutUint64(p[s:], uint64(rp.free1))
-		s += 0x8
+		binary.BigEndian.PutUint64(p[0x20:], uint64(ver))
 
-		for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
-			binary.BigEndian.PutUint64(p[s:], uint64(m.n))
-			s += 0x8
-			p[s] = byte(m.depth)
-			binary.BigEndian.PutUint32(p[s+4:], uint32(m.pages))
-			s += 0x8
-			binary.BigEndian.PutUint64(p[s:], uint64(m.datasize))
-			s += 0x8
-		}
+		s := 0x30
+		s += Serialize(p[s:], d.fl)
+		s += Serialize(p[s:], d.tr)
+
+		sum := crc64.Checksum(p[0x18:], CRCTable)
+		binary.BigEndian.PutUint64(p[0x10:], sum)
 	})
+}
+
+func (d *DB) initParts0() {
+	if d.conf != nil && d.conf.Freelist != nil {
+		d.fl = d.conf.Freelist
+	} else {
+		pl := NewFixedLayout(d.b, d.page, nil)
+		tr := NewTree(pl, 2*d.page, d.page)
+		d.fl = NewFreelist2(d.b, tr, 4*d.page, d.page)
+		pl.SetFreelist(d.fl)
+	}
+
+	if d.conf != nil && d.conf.PageLayout != nil {
+		d.pl = d.conf.PageLayout
+	} else {
+		d.pl = NewFixedLayout(d.b, d.page, nil)
+	}
+	d.pl.SetFreelist(d.fl)
+
+	d.last = 3 * d.page
+}
+
+func (d *DB) initParts1() {
+	if d.conf != nil && d.conf.NewTree != nil {
+		d.newtree = d.conf.NewTree
+	} else {
+		d.newtree = func(pl PageLayout, root, page int64) Tree { return NewTree(pl, root, page) }
+	}
+
+	d.tr = NewTree(d.pl, d.last, d.page)
 }
 
 func (d *DB) initEmpty() (err error) {
@@ -221,10 +198,13 @@ func (d *DB) initEmpty() (err error) {
 		d.page = DefaultPageSize
 	}
 
-	err = d.b.Truncate(8 * d.page)
+	err = d.b.Truncate(4 * d.page)
 	if err != nil {
 		return
 	}
+
+	d.initParts0()
+	d.initParts1()
 
 	h0 := fmt.Sprintf("xrain%3s%7x\n", Version, d.page)
 	if len(h0) != 16 {
@@ -235,17 +215,9 @@ func (d *DB) initEmpty() (err error) {
 		copy(p, h0)
 		copy(p[d.page:], h0)
 
-		for i := 0; i < 2; i++ {
-			rp := &d.root[i]
-			rp.data = 2 * d.page
-			rp.free0 = 3 * d.page
-			rp.free1 = 4 * d.page
-			rp.next = 5 * d.page
-
-			for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
-				m.depth = 1
-				m.pages = 1
-			}
+		for _, off := range []int64{0, d.page} {
+			s := off + 0x18
+			binary.BigEndian.PutUint64(p[s:], uint64(d.page))
 		}
 	})
 
@@ -254,52 +226,66 @@ func (d *DB) initEmpty() (err error) {
 	return d.b.Sync()
 }
 
-func (d *DB) initExisting() {
+func (d *DB) initExisting() (err error) {
 	if d.page == 0 {
 		d.page = 0x100
 	}
 
+	d.initParts1()
+
 again:
 	retry := false
 	d.b.Access(0, 2*d.page, func(p []byte) {
-		page := int64(binary.BigEndian.Uint64(p[0x10:]))
+		d.ver = int64(binary.BigEndian.Uint64(p[0x20:]))
+		if ver := int64(binary.BigEndian.Uint64(p[d.page+0x20:])); ver > d.ver {
+			d.ver = ver
+			p = p[d.page:]
+		} else {
+			p = p[:d.page]
+		}
+
+		page := int64(binary.BigEndian.Uint64(p[0x18:]))
 		if page != d.page {
 			d.page = page
 			retry = true
 			return
 		}
 
-		for _, off := range []int64{0, d.page} {
-			s := off + 0x10 + 0x8 // header + page
-			ver := int64(binary.BigEndian.Uint64(p[s:]))
-			s += 0x8
-			if ver > d.ver {
-				d.ver = ver
-			}
-			rp := &d.root[off/d.page]
-			rp.next = int64(binary.BigEndian.Uint64(p[s:]))
-			s += 0x8
-			rp.data = int64(binary.BigEndian.Uint64(p[s:]))
-			s += 0x8
-			rp.free0 = int64(binary.BigEndian.Uint64(p[s:]))
-			s += 0x8
-			rp.free1 = int64(binary.BigEndian.Uint64(p[s:]))
-			s += 0x8
-
-			for _, m := range []*treemeta{&rp.datameta, &rp.free0meta, &rp.free1meta} {
-				m.n = int64(binary.BigEndian.Uint64(p[s:]))
-				s += 0x8
-				m.depth = p[s]
-				m.pages = int32(binary.BigEndian.Uint32(p[s+4:]))
-				s += 0x8
-				m.datasize = int64(binary.BigEndian.Uint64(p[s:]))
-				s += 0x8
-			}
+		esum := crc64.Checksum(p[0x18:], CRCTable)
+		sum := binary.BigEndian.Uint64(p[0x10:])
+		if sum != esum {
+			err = ErrPageChecksum
+			return
 		}
+
+		// p is last root page
+		s := 0x30
+		ctx := &SerializeContext{Back: d.b, Page: d.page}
+
+		fl, ss := Deserialize(ctx, p[s:])
+		if ctx.Err != nil {
+			err = ctx.Err
+			return
+		}
+		d.fl = fl.(Freelist)
+		ctx.Freelist = d.fl
+		s += ss
+
+		tr, ss := Deserialize(ctx, p[s:])
+		if ctx.Err != nil {
+			err = ctx.Err
+			return
+		}
+		d.tr = tr.(Tree)
+		d.pl = d.tr.PageLayout()
+		d.last = d.tr.Root()
+		s += ss
 	})
 	if retry {
 		goto again
 	}
+
+	return
 }
 
 //

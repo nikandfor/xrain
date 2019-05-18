@@ -2,6 +2,7 @@ package xrain
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"log"
 	"math/rand"
 	"testing"
@@ -40,9 +41,16 @@ func TestXRainSmoke(t *testing.T) {
 	const Page = 0x100
 
 	b := NewMemBack(0)
-	kvl := NewFixedLayout(b, Page, nil)
+	pl := NewFixedLayout(b, Page, nil)
+	fl := NewFreelist2(b, NewTree(pl, 2*Page, Page), 4*Page, Page)
+	pl.SetFreelist(fl)
 
-	db, err := NewDB(b, &Config{PageSize: Page})
+	db, err := NewDB(b, &Config{
+		PageSize:   Page,
+		Freelist:   fl,
+		PageLayout: pl,
+		NewTree:    func(pl PageLayout, root, page int64) Tree { return NewTree(pl, root, page) },
+	})
 	assert.NoError(t, err)
 
 	err = db.UpdateNoBatching(func(tx *Tx) error {
@@ -51,7 +59,10 @@ func TestXRainSmoke(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	log.Printf("dump root %x [%x]\n%v", db.root[db.ver%2].data, db.root[(db.ver+1)%2].data, dumpFile(kvl))
+	//	b.Access2(0, 0x40, Page, 0x40, func(l, r []byte) {
+	//		log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+	//	})
+	//	log.Printf("dump root %x free %x next %x\n%v", db.last, db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
 
 	db, err = NewDB(b, nil)
 	assert.NoError(t, err)
@@ -76,7 +87,10 @@ func TestXRainSmoke(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	log.Printf("dump root %x [%x]\n%v", db.root[db.ver%2].data, db.root[(db.ver+1)%2].data, dumpFile(kvl))
+	b.Access2(0, 0x40, Page, 0x40, func(l, r []byte) {
+		log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+	})
+	log.Printf("dump root %x free %x next %x\n%v", db.last, db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
 }
 
 func TestXRainHeavy(t *testing.T) {
@@ -102,9 +116,11 @@ func TestXRainHeavy(t *testing.T) {
 	err = ht.Run()
 	assert.NoError(t, err)
 
-	//	kvl := NewFixedLayout(b, Page, 0, nil)
-	//	rp := db.root[db.ver%2]
-	//	t.Logf("dump iters %d n %d d %d root %x [%x]\n%v", ht.Iters, rp.datameta.n, rp.datameta.depth, rp.data, db.root[(db.ver+1)%2].data, dumpFile(kvl))
+	//	pl := NewFixedLayout(b, Page, nil)
+	//	b.Access2(0, 0x40, Page, 0x40, func(l, r []byte) {
+	//		log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+	//	})
+	//	log.Printf("dump root %x (%d) free %x next %x\n%v", db.last, db.tr.Size(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
 
 	t.Logf("db size: 0x%x", b.Size())
 }

@@ -5,6 +5,14 @@ import (
 )
 
 type (
+	Freelist interface {
+		Serializer
+
+		Alloc(n int) (int64, error)
+		Free(n int, off, ver int64) error
+		SetVer(ver, keep int64)
+	}
+
 	Freelist2 struct {
 		b Back
 		t Tree // off|size -> ver; size ::= log(n)
@@ -39,6 +47,33 @@ func NewFreelist2(b Back, t Tree, next, page int64) *Freelist2 {
 	}
 }
 
+func (*Freelist2) SerializerName() string { return "Freelist2" }
+
+func (*Freelist2) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
+	tr, s := Deserialize(ctx, p)
+	if ctx.Err != nil {
+		return nil, s
+	}
+
+	next := int64(binary.BigEndian.Uint64(p[s:]))
+	s += 8
+
+	l := NewFreelist2(ctx.Back, tr.(Tree), next, ctx.Page)
+
+	tr.(Tree).PageLayout().SetFreelist(l)
+
+	return l, s
+}
+
+func (l *Freelist2) Serialize(p []byte) int {
+	s := Serialize(p, l.t)
+
+	binary.BigEndian.PutUint64(p[s:], uint64(l.next))
+	s += 8
+
+	return s
+}
+
 func (l *Freelist2) Alloc(n int) (off int64, err error) {
 	//	log.Printf("alloc: %2x       ver %d/%d next %x  def %x", n, l.ver, l.keep, l.next, l.deferred)
 	//	defer func() {
@@ -56,7 +91,7 @@ func (l *Freelist2) Alloc(n int) (off int64, err error) {
 		if _, ok := used[kv.k]; ok {
 			continue
 		}
-		if kv.v != l.ver && kv.v >= l.keep {
+		if kv.v >= l.keep {
 			continue
 		}
 
@@ -96,7 +131,7 @@ next:
 
 	vbytes := l.t.Get(key)
 	ver := int64(binary.BigEndian.Uint64(vbytes))
-	if ver >= l.keep && ver != l.ver {
+	if ver >= l.keep {
 		goto next
 	}
 
@@ -216,6 +251,7 @@ fin:
 
 func (l *Freelist2) SetVer(ver, keep int64) {
 	l.ver, l.keep = ver, keep
+	l.t.SetVer(l.ver)
 }
 
 func (l *Freelist2) unlock() (err error) {

@@ -1,6 +1,7 @@
 package xrain
 
 import (
+	"encoding/binary"
 	"log"
 )
 
@@ -8,12 +9,23 @@ var checkTree func(t *FileTree)
 
 type (
 	Tree interface {
+		Serializer
+
 		Size() int
+
+		Get(k []byte) []byte
+
 		Put(k, v []byte) (old []byte, err error)
 		Del(k []byte) (old []byte, err error)
-		Get(k []byte) []byte
+
 		Next(k []byte) []byte
 		Prev(k []byte) []byte
+
+		Root() int64
+		SetRoot(int64)
+		SetVer(ver int64)
+
+		PageLayout() PageLayout
 	}
 
 	FileTree struct {
@@ -22,7 +34,8 @@ type (
 		root int64
 		mask int64
 
-		meta *treemeta
+		size  int
+		depth int
 
 		dd map[string]string
 	}
@@ -52,12 +65,50 @@ func NewTree(p PageLayout, root, page int64) *FileTree {
 	return t
 }
 
-func (t *FileTree) Size() int {
-	if t.meta == nil {
-		return 0
-	}
-	return int(t.meta.n)
+func (*FileTree) SerializerName() string {
+	return "FileTree"
 }
+
+func (*FileTree) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
+	pl, s := Deserialize(ctx, p)
+	if ctx.Err != nil {
+		return nil, s
+	}
+
+	root := int64(binary.BigEndian.Uint64(p[s:]))
+	s += 8
+	size := int64(binary.BigEndian.Uint64(p[s:]))
+	s += 8
+
+	t := NewTree(pl.(PageLayout), root&^0xff, ctx.Page)
+	t.size = int(size)
+	t.depth = int(root & 0xff)
+
+	return t, s
+}
+
+func (t *FileTree) Serialize(p []byte) int {
+	s := Serialize(p, t.p)
+
+	binary.BigEndian.PutUint64(p[s:], uint64(t.root)|uint64(t.depth))
+	s += 8
+	binary.BigEndian.PutUint64(p[s:], uint64(t.size))
+	s += 8
+
+	return s
+}
+
+func (t *FileTree) SetVer(ver int64) { t.p.SetVer(ver) }
+
+func (t *FileTree) Size() int {
+	return t.size
+}
+
+func (t *FileTree) Root() int64 { return t.root }
+
+func (t *FileTree) SetRoot(r int64) { t.root = r }
+
+func (t *FileTree) PageLayout() PageLayout { return t.p }
 
 func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 	st, eq := t.seek(nil, k)
@@ -86,8 +137,8 @@ func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 		t.dd[string(k)] = string(v)
 	}
 
-	if t.meta != nil && !eq {
-		t.meta.n++
+	if !eq {
+		t.size++
 	}
 
 	err = t.out(st, l, r)
@@ -119,9 +170,7 @@ func (t *FileTree) Del(k []byte) (old []byte, err error) {
 		delete(t.dd, string(k))
 	}
 
-	if t.meta != nil {
-		t.meta.n--
-	}
+	t.size--
 
 	err = t.out(st, l, NilPage)
 	return
@@ -364,9 +413,7 @@ func (t *FileTree) out(s []keylink, l, r int64) (err error) {
 		}
 		l = t.p.Int64(l, 0)
 
-		if t.meta != nil {
-			t.meta.depth--
-		}
+		t.depth--
 	}
 
 	if r != NilPage {
@@ -390,9 +437,7 @@ func (t *FileTree) out(s []keylink, l, r int64) (err error) {
 		l = off
 		r = NilPage
 
-		if t.meta != nil {
-			t.meta.depth++
-		}
+		t.depth++
 	}
 
 	if r != NilPage {

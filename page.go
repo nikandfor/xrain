@@ -10,6 +10,8 @@ const NilPage = -1
 
 type (
 	PageLayout interface {
+		Serializer
+
 		AllocRoot() (int64, error)
 		Free(p int64) error
 
@@ -40,8 +42,6 @@ type (
 		page int64
 		ver  int64
 		free Freelist
-
-		meta *treemeta
 	}
 
 	KVLayout struct { // base [16]byte, keys [size]int16, data []byte
@@ -171,6 +171,32 @@ func (l *BaseLayout) setextended(p []byte, n int) {
 	p[2] = byte(n >> 16)
 	p[3] = byte(n >> 8)
 	p[4] = byte(n)
+}
+
+func (*FixedLayout) SerializerName() string { return "FixedLayout" }
+
+func (*FixedLayout) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
+	l := NewFixedLayout(ctx.Back, ctx.Page, ctx.Freelist)
+
+	s := 0
+	k, n := binary.Uvarint(p[s:])
+	s += n
+	v, n := binary.Uvarint(p[s:])
+	s += n
+	pm, n := binary.Uvarint(p[s:])
+	s += n
+
+	l.SetKVSize(int(k), int(v), int(pm))
+
+	return l, s
+}
+
+func (l *FixedLayout) Serialize(p []byte) int {
+	s := 0
+	s += binary.PutUvarint(p[s:], uint64(l.k))
+	s += binary.PutUvarint(p[s:], uint64(l.v))
+	s += binary.PutUvarint(p[s:], uint64(l.pm))
+	return s
 }
 
 func (l *FixedLayout) SetKVSize(k, v, pm int) {

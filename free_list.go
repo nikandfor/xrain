@@ -13,13 +13,9 @@ const (
 )
 
 type (
-	Freelist interface {
-		Alloc(n int) (int64, error)
-		Free(n int, off, ver int64) error
-		SetVer(ver, keep int64)
-	}
-
 	TreeFreelist struct {
+		Serializer
+
 		keep   int64
 		b      Back
 		t0, t1 Tree // get, put
@@ -64,7 +60,7 @@ func NewTreeFreelist(b Back, t0, t1 Tree, next, page int64) *TreeFreelist {
 	return l
 }
 
-func NewEverNextFreelist(b Back, page int64) *GrowFreelist {
+func NewEverGrowFreelist(b Back, page, next int64) *GrowFreelist {
 	flen := b.Size()
 
 	l := &GrowFreelist{
@@ -206,6 +202,21 @@ func (l *TreeFreelist) unlock() (err error) {
 	l.lock = false
 
 	return nil
+}
+
+func (*GrowFreelist) SerializerName() string {
+	return "GrowFreelist"
+}
+
+func (*GrowFreelist) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
+	next := int64(binary.BigEndian.Uint64(p))
+	l := NewEverGrowFreelist(ctx.Back, ctx.Page, next)
+	return l, 8
+}
+
+func (l *GrowFreelist) Serialize(p []byte) int {
+	binary.BigEndian.PutUint64(p, uint64(l.next))
+	return 8
 }
 
 func (l *GrowFreelist) SetVer(ver, keep int64) {}
