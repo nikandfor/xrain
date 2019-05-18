@@ -175,7 +175,7 @@ func (l *BaseLayout) setextended(p []byte, n int) {
 
 func (*FixedLayout) SerializerName() string { return "FixedLayout" }
 
-func (*FixedLayout) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
+func (*FixedLayout) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
 	l := NewFixedLayout(ctx.Back, ctx.Page, ctx.Freelist)
 
 	s := 0
@@ -188,7 +188,7 @@ func (*FixedLayout) Deserialize(ctx *SerializeContext, p []byte) (interface{}, i
 
 	l.SetKVSize(int(k), int(v), int(pm))
 
-	return l, s
+	return l, s, nil
 }
 
 func (l *FixedLayout) Serialize(p []byte) int {

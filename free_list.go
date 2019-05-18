@@ -208,10 +208,10 @@ func (*GrowFreelist) SerializerName() string {
 	return "GrowFreelist"
 }
 
-func (*GrowFreelist) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
+func (*GrowFreelist) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
 	next := int64(binary.BigEndian.Uint64(p))
 	l := NewEverGrowFreelist(ctx.Back, ctx.Page, next)
-	return l, 8
+	return l, 8, nil
 }
 
 func (l *GrowFreelist) Serialize(p []byte) int {

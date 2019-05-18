@@ -49,10 +49,10 @@ func NewFreelist2(b Back, t Tree, next, page int64) *Freelist2 {
 
 func (*Freelist2) SerializerName() string { return "Freelist2" }
 
-func (*Freelist2) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
-	tr, s := Deserialize(ctx, p)
-	if ctx.Err != nil {
-		return nil, s
+func (*Freelist2) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
+	tr, s, err := Deserialize(ctx, p)
+	if err != nil {
+		return nil, s, err
 	}
 
 	next := int64(binary.BigEndian.Uint64(p[s:]))
@@ -62,7 +62,7 @@ func (*Freelist2) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int
 
 	tr.(Tree).PageLayout().SetFreelist(l)
 
-	return l, s
+	return l, s, nil
 }
 
 func (l *Freelist2) Serialize(p []byte) int {
@@ -323,6 +323,7 @@ func (l *Freelist2) shrinkFile() (err error) {
 	if fend == l.next {
 		return
 	}
+	// TODO(nik): shrink by big parts
 
 	err = l.b.Truncate(fend)
 	if err != nil {

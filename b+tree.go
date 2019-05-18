@@ -69,10 +69,10 @@ func (*FileTree) SerializerName() string {
 	return "FileTree"
 }
 
-func (*FileTree) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
-	pl, s := Deserialize(ctx, p)
-	if ctx.Err != nil {
-		return nil, s
+func (*FileTree) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
+	pl, s, err := Deserialize(ctx, p)
+	if err != nil {
+		return nil, s, err
 	}
 
 	root := int64(binary.BigEndian.Uint64(p[s:]))
@@ -84,7 +84,7 @@ func (*FileTree) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int)
 	t.size = int(size)
 	t.depth = int(root & 0xff)
 
-	return t, s
+	return t, s, nil
 }
 
 func (t *FileTree) Serialize(p []byte) int {

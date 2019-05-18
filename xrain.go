@@ -262,18 +262,19 @@ again:
 		s := 0x30
 		ctx := &SerializeContext{Back: d.b, Page: d.page}
 
-		fl, ss := Deserialize(ctx, p[s:])
-		if ctx.Err != nil {
-			err = ctx.Err
+		var fl interface{}
+		var ss int
+		fl, ss, err = Deserialize(ctx, p[s:])
+		if err != nil {
 			return
 		}
 		d.fl = fl.(Freelist)
 		ctx.Freelist = d.fl
 		s += ss
 
-		tr, ss := Deserialize(ctx, p[s:])
-		if ctx.Err != nil {
-			err = ctx.Err
+		var tr interface{}
+		tr, ss, err = Deserialize(ctx, p[s:])
+		if err != nil {
 			return
 		}
 		d.tr = tr.(Tree)

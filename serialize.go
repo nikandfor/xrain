@@ -11,13 +11,12 @@ type (
 		Page     int64
 		Freelist Freelist
 		Name     string
-		Err      error
 	}
 
 	Serializer interface {
 		SerializerName() string
 		Serialize(p []byte) int
-		Deserialize(ctx *SerializeContext, p []byte) (interface{}, int)
+		Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error)
 	}
 )
 
@@ -46,7 +45,7 @@ func Serialize(p []byte, o Serializer) int {
 	return s
 }
 
-func Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
+func Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
 	s := 0
 	nl := int(p[s])
 	s++
@@ -54,10 +53,9 @@ func Deserialize(ctx *SerializeContext, p []byte) (interface{}, int) {
 	s += nl
 	o := Serializers[name]
 	if o == nil {
-		ctx.Err = fmt.Errorf("no such serializer: %v", name)
-		return nil, s
+		return nil, s, fmt.Errorf("no such serializer: %v", name)
 	}
 	ctx.Name = name
-	r, ss := o.Deserialize(ctx, p[s:])
-	return r, s + ss
+	r, ss, err := o.Deserialize(ctx, p[s:])
+	return r, s + ss, err
 }
