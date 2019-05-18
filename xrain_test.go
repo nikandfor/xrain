@@ -49,7 +49,7 @@ func TestXRainSmoke(t *testing.T) {
 		PageSize:   Page,
 		Freelist:   fl,
 		PageLayout: pl,
-		NewTree:    func(pl PageLayout, root, page int64) Tree { return NewTree(pl, root, page) },
+		Tree:       NewTree(pl, 3*Page, Page),
 	})
 	assert.NoError(t, err)
 
@@ -90,7 +90,7 @@ func TestXRainSmoke(t *testing.T) {
 	b.Access2(0, 0x40, Page, 0x40, func(l, r []byte) {
 		log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 	})
-	log.Printf("dump root %x free %x next %x\n%v", db.last, db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+	log.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
 }
 
 func TestXRainHeavy(t *testing.T) {

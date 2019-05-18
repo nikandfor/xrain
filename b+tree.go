@@ -26,6 +26,7 @@ type (
 		SetVer(ver int64)
 
 		PageLayout() PageLayout
+		Copy() Tree
 	}
 
 	FileTree struct {
@@ -109,6 +110,8 @@ func (t *FileTree) Root() int64 { return t.root }
 func (t *FileTree) SetRoot(r int64) { t.root = r }
 
 func (t *FileTree) PageLayout() PageLayout { return t.p }
+
+func (t *FileTree) Copy() Tree { cp := *t; return &cp }
 
 func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 	st, eq := t.seek(nil, k)

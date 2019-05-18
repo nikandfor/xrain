@@ -34,16 +34,13 @@ xx: <tree>
 
 type (
 	DB struct {
-		b  Back
-		fl Freelist
-		pl PageLayout
-		tr Tree
+		b     Back
+		fl    Freelist
+		t, tr Tree
 
 		conf *Config
 
-		newtree func(pl PageLayout, root, page int64) Tree
-		page    int64
-		last    int64
+		page int64
 
 		mu   sync.Mutex
 		ver  int64
@@ -63,7 +60,7 @@ type (
 
 		Freelist   Freelist
 		PageLayout PageLayout
-		NewTree    func(pl PageLayout, root, page int64) Tree
+		Tree       Tree
 	}
 )
 
@@ -100,12 +97,12 @@ func NewDB(b Back, c *Config) (*DB, error) {
 
 func (d *DB) View(f func(tx *Tx) error) error {
 	d.mu.Lock()
-	root := d.last
+	tr := d.tr
 	d.mu.Unlock()
 
 	tx := &Tx{
 		d: d,
-		t: d.newtree(d.pl, root, d.page),
+		t: tr,
 	}
 
 	return f(tx)
@@ -121,11 +118,11 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	ver++
 
 	d.fl.SetVer(ver, keep)
-	d.tr.SetVer(ver)
+	d.t.SetVer(ver)
 
 	tx := &Tx{
 		d:        d,
-		t:        d.tr,
+		t:        d.t,
 		writable: true,
 	}
 
@@ -136,9 +133,11 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 
 	d.writeRoot(ver)
 
+	tr := tx.t.Copy()
+
 	d.mu.Lock()
 	d.ver++
-	d.last = tx.t.Root()
+	d.tr = tr
 	d.mu.Unlock()
 
 	return nil
@@ -156,7 +155,7 @@ func (d *DB) writeRoot(ver int64) {
 
 		s := 0x30
 		s += Serialize(p[s:], d.fl)
-		s += Serialize(p[s:], d.tr)
+		s += Serialize(p[s:], d.t)
 
 		sum := crc64.Checksum(p[0x18:], CRCTable)
 		binary.BigEndian.PutUint64(p[0x10:], sum)
@@ -172,25 +171,16 @@ func (d *DB) initParts0() {
 		d.fl = NewFreelist2(d.b, tr, 4*d.page, d.page)
 		pl.SetFreelist(d.fl)
 	}
-
-	if d.conf != nil && d.conf.PageLayout != nil {
-		d.pl = d.conf.PageLayout
-	} else {
-		d.pl = NewFixedLayout(d.b, d.page, nil)
-	}
-	d.pl.SetFreelist(d.fl)
-
-	d.last = 3 * d.page
 }
 
 func (d *DB) initParts1() {
-	if d.conf != nil && d.conf.NewTree != nil {
-		d.newtree = d.conf.NewTree
+	if d.conf != nil && d.conf.Tree != nil {
+		d.t = d.conf.Tree
 	} else {
-		d.newtree = func(pl PageLayout, root, page int64) Tree { return NewTree(pl, root, page) }
+		pl := NewFixedLayout(d.b, d.page, d.fl)
+		d.t = NewTree(pl, 3*d.page, d.page)
+		d.tr = d.t.Copy()
 	}
-
-	d.tr = NewTree(d.pl, d.last, d.page)
 }
 
 func (d *DB) initEmpty() (err error) {
@@ -277,9 +267,8 @@ again:
 		if err != nil {
 			return
 		}
-		d.tr = tr.(Tree)
-		d.pl = d.tr.PageLayout()
-		d.last = d.tr.Root()
+		d.t = tr.(Tree)
+		d.tr = d.t.Copy()
 		s += ss
 	})
 	if retry {

@@ -189,3 +189,11 @@ func TestTreeBig(t *testing.T) {
 		assert.NoError(t, err)
 	}
 }
+
+func TestTreeCopy(t *testing.T) {
+	tr := NewTree(nil, 0, 0)
+	cp := tr.Copy()
+
+	assert.Equal(t, tr, cp)
+	assert.False(t, tr == cp)
+}
