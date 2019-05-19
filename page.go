@@ -3,6 +3,7 @@ package xrain
 import (
 	"bytes"
 	"encoding/binary"
+	"hash/crc32"
 	"sort"
 )
 
@@ -38,7 +39,7 @@ type (
 		SetFreelist(fl Freelist)
 	}
 
-	BaseLayout struct { // isbranch bit, size uint15, extended uint24, _ [3]byte, ver int64
+	BaseLayout struct { // crc32 uint32, isbranch bit, size uint15, extended uint16, ver int64
 		b    Back
 		page int64
 		ver  int64
@@ -81,7 +82,7 @@ func (l *BaseLayout) SetFreelist(fl Freelist) {
 
 func (l *BaseLayout) NKeys(off int64) (r int) {
 	l.b.Access(off, 0x10, func(p []byte) {
-		r = int(p[0])&0x7f<<8 | int(p[1])
+		r = int(p[4])&^0x80<<8 | int(p[5])
 	})
 	return
 }
@@ -145,14 +146,14 @@ func (l *BaseLayout) alloc(nold, nnew int, off, ver int64) (noff int64, err erro
 }
 
 func (l *BaseLayout) isleaf(p []byte) bool {
-	return p[0]&0x80 == 0
+	return p[4]&0x80 == 0
 }
 
 func (l *BaseLayout) setleaf(p []byte, y bool) {
 	if y {
-		p[0] &^= 0x80
+		p[4] &^= 0x80
 	} else {
-		p[0] |= 0x80
+		p[4] |= 0x80
 	}
 }
 
@@ -172,23 +173,33 @@ func (l *BaseLayout) setver(p []byte, v int64) {
 }
 
 func (l *BaseLayout) nkeys(p []byte) int {
-	return int(p[0])&0x7f<<8 | int(p[1])
+	return int(p[4])&^0x80<<8 | int(p[5])
 }
 
 func (l *BaseLayout) extended(p []byte) int {
-	return (int(p[2])<<16 | int(p[3])<<8 | int(p[4])) + 1
+	return (int(p[6])<<8 | int(p[7])) + 1
 }
 
 func (l *BaseLayout) setsize(p []byte, n int) {
-	p[0] = p[0]&0x80 | byte(n>>8&0x7f)
-	p[1] = byte(n)
+	p[4] = p[4]&0x80 | byte(n>>8&^0x80)
+	p[5] = byte(n)
 }
 
 func (l *BaseLayout) setextended(p []byte, n int) {
 	n--
-	p[2] = byte(n >> 16)
-	p[3] = byte(n >> 8)
-	p[4] = byte(n)
+	p[6] = byte(n >> 8)
+	p[7] = byte(n)
+}
+
+func (l *BaseLayout) crccheck(p []byte) bool {
+	sum := crc32.ChecksumIEEE(p[4:])
+	exp := binary.BigEndian.Uint32(p)
+	return sum == exp
+}
+
+func (l *BaseLayout) crccalc(p []byte) {
+	sum := crc32.ChecksumIEEE(p[4:])
+	binary.BigEndian.PutUint32(p, sum)
 }
 
 func (*FixedLayout) SerializerName() string { return "FixedLayout" }
@@ -457,7 +468,7 @@ again:
 	}
 
 	l.b.Access2(loff, l.p, roff, l.p, func(lp, rp []byte) {
-		rp[0] = lp[0]
+		rp[4] = lp[4]
 		l.setheader(lp)
 		l.setheader(rp)
 

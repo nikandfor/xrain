@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"hash/crc32"
 	"log"
+	"math/rand"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,8 +19,8 @@ func TestPageFixedIsLeaf(t *testing.T) {
 	pl := NewFixedLayout(b, Page, NewEverGrowFreelist(b, Page, 0))
 
 	b.Access2(0, 0x10, Page, 0x10, func(l, r []byte) {
-		l[0] = 0x00
-		r[0] = 0x80
+		l[4] = 0x00
+		r[4] = 0x80
 	})
 
 	assert.Equal(t, true, pl.IsLeaf(0))
@@ -425,4 +427,17 @@ func longval(l int, v string) []byte {
 	r := make([]byte, l)
 	copy(r, v)
 	return r
+}
+
+func BenchmarkCRC32(b *testing.B) {
+	const Page = 4 << 10 // 4KiB
+	b.ReportAllocs()
+	b.SetBytes(Page)
+
+	data := make([]byte, Page)
+	_, _ = rand.Read(data)
+
+	for i := 0; i < b.N; i++ {
+		_ = crc32.ChecksumIEEE(data)
+	}
 }
