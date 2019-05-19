@@ -1,5 +1,5 @@
 run:
-  modules-download-mode: readonly
+  #modules-download-mode: readonly
 linters-settings:
   govet:
     check-shadowing: false
