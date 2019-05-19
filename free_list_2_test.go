@@ -319,7 +319,7 @@ func TestFreelist2Auto(t *testing.T) {
 
 			//	log.Printf("alloced %d at %x, next: %x", n, off, fl.next)
 			b.Access(off, 0x10, func(p []byte) {
-				pl.setver(p, ver)
+				pl.setver(p, ver) //nolint:scopelint
 				pl.setextended(p, n)
 				pl.setsize(p, 0)
 			})

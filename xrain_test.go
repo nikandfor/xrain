@@ -245,14 +245,14 @@ func (t *HeavyTester) worker(c, r chan HeavyTask) {
 		switch w.TaskType {
 		case TaskGet:
 			w.Err = t.DB.View(func(tx *Tx) error {
-				w.Res = tx.Get(w.Key)
+				w.Res = tx.Get(w.Key) //nolint:scopelint
 				//	log.Printf("get %x -> %x", w.Key, w.Value)
 				return nil
 			})
 		case TaskPut:
 			w.Err = t.DB.UpdateNoBatching(func(tx *Tx) error {
 				//	log.Printf("put %x -> %x", w.Key, w.Value)
-				return tx.Put(w.Key, w.Value)
+				return tx.Put(w.Key, w.Value) //nolint:scopelint
 			})
 		default:
 			panic(w)

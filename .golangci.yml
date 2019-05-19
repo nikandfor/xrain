@@ -42,6 +42,5 @@ linters:
   disable:
     - unparam
     - nakedret
-    - scopelint # reports ints
     - gochecknoinits
     - gochecknoglobals
