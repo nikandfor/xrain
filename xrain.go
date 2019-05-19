@@ -38,6 +38,8 @@ type (
 		fl    Freelist
 		t, tr Tree
 
+		nb NewBucketFunc
+
 		conf *Config
 
 		page int64
@@ -52,9 +54,9 @@ type (
 	Config struct {
 		PageSize int64
 
-		Freelist   Freelist
-		PageLayout PageLayout
-		Tree       Tree
+		Freelist  Freelist
+		Tree      Tree
+		NewBucket NewBucketFunc
 	}
 )
 
@@ -120,7 +122,7 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 
 	d.writeRoot(ver)
 
-	tr := tx.t.Copy()
+	tr := d.t.Copy()
 
 	d.mu.Lock()
 	d.ver++
@@ -159,15 +161,21 @@ func (d *DB) initParts0() {
 		d.fl = NewFreelist2(d.b, tr, 4*d.page, d.page)
 		pl.SetFreelist(d.fl)
 	}
-}
 
-func (d *DB) initParts1() {
 	if d.conf != nil && d.conf.Tree != nil {
 		d.t = d.conf.Tree
 	} else {
 		pl := NewFixedLayout(d.b, d.page, d.fl)
 		d.t = NewTree(pl, 3*d.page, d.page)
 		d.tr = d.t.Copy()
+	}
+}
+
+func (d *DB) initParts1() {
+	if d.conf != nil && d.conf.NewBucket != nil {
+		d.nb = d.conf.NewBucket
+	} else {
+		d.nb = NewBucketFunc(newBucket)
 	}
 }
 

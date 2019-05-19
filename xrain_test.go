@@ -46,10 +46,9 @@ func TestXRainSmoke(t *testing.T) {
 	pl.SetFreelist(fl)
 
 	db, err := NewDB(b, &Config{
-		PageSize:   Page,
-		Freelist:   fl,
-		PageLayout: pl,
-		Tree:       NewTree(pl, 3*Page, Page),
+		PageSize: Page,
+		Freelist: fl,
+		Tree:     NewTree(pl, 3*Page, Page),
 	})
 	assert.NoError(t, err)
 

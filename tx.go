@@ -8,10 +8,25 @@ import (
 var ErrBucketAlreadyExists = errors.New("bucket already exists")
 
 type (
+	NewBucketFunc func(tx *Tx, t Tree) Bucket
+
 	Tx struct {
-		d *DB
-		SimpleBucket
+		d        *DB
+		b        Bucket
 		writable bool
+	}
+
+	Bucket interface {
+		Get(k []byte) []byte
+		Put(k, v []byte) error
+		Del(k []byte) error
+
+		Next(k []byte) []byte
+		Prev(k []byte) []byte
+
+		Bucket(k []byte) Bucket
+		PutBucket(k []byte) (Bucket, error)
+		DelBucket(k []byte) error
 	}
 
 	SimpleBucket struct {
@@ -27,16 +42,20 @@ type (
 
 func newTx(d *DB, t Tree, w bool) *Tx {
 	tx := &Tx{
-		d: d,
-		SimpleBucket: SimpleBucket{
-			t:    t,
-			root: t.Root(),
-		},
+		d:        d,
 		writable: w,
 	}
-	tx.tx = tx
+	tx.b = d.nb(tx, t)
 
 	return tx
+}
+
+func newBucket(tx *Tx, t Tree) Bucket {
+	return &SimpleBucket{
+		tx:   tx,
+		t:    t,
+		root: t.Root(),
+	}
 }
 
 func (b *SimpleBucket) Put(k, v []byte) error {
@@ -89,7 +108,7 @@ func (b *SimpleBucket) Prev(k []byte) []byte {
 	return b.t.Prev(k)
 }
 
-func (b *SimpleBucket) Bucket(k []byte) *SimpleBucket {
+func (b *SimpleBucket) Bucket(k []byte) Bucket {
 	if !b.allowed(false) {
 		panic("not allowed")
 	}
@@ -127,7 +146,7 @@ func (b *SimpleBucket) Bucket(k []byte) *SimpleBucket {
 	return sub
 }
 
-func (b *SimpleBucket) PutBucket(k []byte) (*SimpleBucket, error) {
+func (b *SimpleBucket) PutBucket(k []byte) (Bucket, error) {
 	if !b.allowed(false) {
 		panic("not allowed")
 	}
@@ -236,5 +255,13 @@ func (b *SimpleBucket) propagate() error {
 }
 
 func (b *SimpleBucket) allowed(w bool) bool {
-	return !b.del && (b.tx.writable || !w)
+	return !b.del && (b.tx.IsWritable() || !w)
 }
+
+func (tx *Tx) IsWritable() bool                   { return tx.writable }
+func (tx *Tx) Get(k []byte) []byte                { return tx.b.Get(k) }
+func (tx *Tx) Put(k, v []byte) error              { return tx.b.Put(k, v) }
+func (tx *Tx) Del(k []byte) error                 { return tx.b.Del(k) }
+func (tx *Tx) Bucket(k []byte) Bucket             { return tx.b.Bucket(k) }
+func (tx *Tx) PutBucket(k []byte) (Bucket, error) { return tx.b.PutBucket(k) }
+func (tx *Tx) DelBucket(k []byte) error           { return tx.b.DelBucket(k) }
