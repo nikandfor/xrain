@@ -36,7 +36,6 @@ linters-settings:
       - unnamedResult
       - builtinShadow
       - commentedOutCode
-      #- wrapperFunc
 
 linters:
   enable-all: true
@@ -46,11 +45,3 @@ linters:
     - scopelint # reports ints
     - gochecknoinits
     - gochecknoglobals
-    #- maligned
-    #- prealloc
-
-issues:
-  exclude-rules:
-    #- text: "weak cryptographic primitive"
-    #  linters:
-    #    - gosec
