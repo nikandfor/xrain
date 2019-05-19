@@ -143,6 +143,7 @@ func (d *DB) writeRoot(ver int64) {
 		s := 0x30
 		s += Serialize(p[s:], d.fl)
 		s += Serialize(p[s:], d.t)
+		_ = s
 
 		sum := crc64.Checksum(p[0x18:], CRCTable)
 		binary.BigEndian.PutUint64(p[0x10:], sum)
@@ -257,6 +258,8 @@ again:
 		d.t = tr.(Tree)
 		d.tr = d.t.Copy()
 		s += ss
+
+		_ = s
 	})
 	if retry {
 		goto again
@@ -266,6 +269,7 @@ again:
 }
 
 //
+
 func checkPage(l PageLayout, off int64) {
 	n := l.NKeys(off)
 	var prev []byte
@@ -295,7 +299,7 @@ func checkFile(l PageLayout) {
 		panic(fmt.Sprintf("layout type %T", l))
 	}
 
-	b.Sync()
+	_ = b.Sync()
 	sz := b.Size()
 	for off := int64(0); off < sz; off += page {
 		checkPage(l, off)
@@ -382,7 +386,7 @@ func dumpFile(l PageLayout) string {
 	}
 
 	var buf strings.Builder
-	b.Sync()
+	_ = b.Sync()
 	sz := b.Size()
 	off := int64(0)
 	if sz > 0 {

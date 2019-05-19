@@ -172,7 +172,10 @@ func (l *Freelist2) allocGrow(n int) (off int64, err error) {
 
 	for b, n := align(off, p, sz); b != 0; b, n = align(off, p, sz) {
 		//	log.Printf("back   % 16x n %x", off, n)
-		l.Free(n, off, l.ver)
+		err = l.Free(n, off, l.ver)
+		if err != nil {
+			return
+		}
 		off += b
 	}
 

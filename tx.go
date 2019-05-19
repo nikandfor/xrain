@@ -185,9 +185,8 @@ func (b *SimpleBucket) DelBucket(k []byte) error {
 		panic("not allowed")
 	}
 
-	n := string(k)
 	if len(b.sub) != 0 {
-		if sub, ok := b.sub[n]; ok {
+		if sub, ok := b.sub[string(k)]; ok {
 			sub.del = true
 		}
 	}
