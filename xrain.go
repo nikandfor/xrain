@@ -48,9 +48,10 @@ type (
 
 		page int64
 
-		mu   sync.Mutex
-		ver  int64
-		keep int64
+		mu    sync.Mutex
+		ver   int64
+		keep  int64
+		keepl map[int64]int
 
 		wmu sync.Mutex
 	}
@@ -66,7 +67,8 @@ type (
 
 func NewDB(b Back, c *Config) (*DB, error) {
 	d := &DB{
-		b: b,
+		b:     b,
+		keepl: make(map[int64]int),
 	}
 
 	if c != nil {
@@ -98,7 +100,20 @@ func NewDB(b Back, c *Config) (*DB, error) {
 func (d *DB) View(f func(tx *Tx) error) error {
 	d.mu.Lock()
 	tr := d.tr
+	ver := d.ver
+	d.keepl[ver]++
 	d.mu.Unlock()
+
+	defer func() {
+		d.mu.Lock()
+		d.keepl[ver]--
+		c := d.keepl[ver]
+		if c == 0 {
+			delete(d.keepl, ver)
+			d.updateKeep(ver)
+		}
+		d.mu.Unlock()
+	}()
 
 	tx := newTx(d, tr, false)
 
@@ -131,6 +146,7 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	d.mu.Lock()
 	d.ver++
 	d.tr = tr
+	d.updateKeep(0)
 	d.mu.Unlock()
 
 	return nil
@@ -138,6 +154,19 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 
 func (d *DB) Update(f func(tx *Tx) error) error {
 	return d.UpdateNoBatching(f)
+}
+
+func (d *DB) updateKeep(ver int64) {
+	min := d.ver
+	for k := range d.keepl {
+		if k < min {
+			if k < ver {
+				return
+			}
+			min = k
+		}
+	}
+	d.keep = min
 }
 
 func (d *DB) writeRoot(ver int64) {
