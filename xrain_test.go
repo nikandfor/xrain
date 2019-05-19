@@ -54,8 +54,7 @@ func TestXRainSmoke(t *testing.T) {
 	assert.NoError(t, err)
 
 	err = db.UpdateNoBatching(func(tx *Tx) error {
-		err := tx.Put([]byte("key_aaaa"), []byte("value_aa"))
-		return err
+		return tx.Put([]byte("key_aaaa"), []byte("value_aa"))
 	})
 	assert.NoError(t, err)
 
@@ -75,8 +74,7 @@ func TestXRainSmoke(t *testing.T) {
 	assert.NoError(t, err)
 
 	err = db.UpdateNoBatching(func(tx *Tx) error {
-		err := tx.Del([]byte("key_aaaa"))
-		return err
+		return tx.Del([]byte("key_aaaa"))
 	})
 	assert.NoError(t, err)
 
@@ -129,7 +127,7 @@ func (t *HeavyTester) Run() error {
 	c := make(chan HeavyTask, 1)
 	r := make(chan HeavyTask, t.Workers)
 
-	var logs []HeavyTask
+	logs := make([]HeavyTask, 0, 2*t.Iters)
 
 	for i := 0; i < t.Workers; i++ {
 		go t.worker(c, r)

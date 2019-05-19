@@ -195,19 +195,23 @@ func TestFreelistAuto(t *testing.T) {
 					}
 					if fl.next != nextwas {
 						if j > 1 {
-							log.Fatalf("we changed %3d pages out of %3d (%3d) for update. next %3d <- %3d. is: %d %d %d", cnt, available, available2, fl.next/Page, nextwas/Page, j, ii, i)
+							log.Printf("we changed %3d pages out of %3d (%3d) for update. next %3d <- %3d. is: %d %d %d", cnt, available, available2, fl.next/Page, nextwas/Page, j, ii, i)
+							t.Error()
+							return
 						}
 						lastgrow = j + 1
 					}
 				}
 
 				if fl.next > maxnext {
-					t := fl.t0
-					for k := t.Next(nil); k != nil; k = t.Next(k) {
-						v := t.Get(k)
+					tr := fl.t0
+					for k := tr.Next(nil); k != nil; k = tr.Next(k) {
+						v := tr.Get(k)
 						ver := int64(binary.BigEndian.Uint64(v))
 						if ver < fl.keep {
-							log.Fatalf("allocated more pages than needed %d -> %d", maxnext/Page, fl.next/Page)
+							log.Printf("allocated more pages than needed %d -> %d", maxnext/Page, fl.next/Page)
+							t.Error()
+							return
 						}
 					}
 				}

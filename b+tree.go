@@ -295,10 +295,8 @@ func (t *FileTree) step(st []keylink, k []byte, back bool) (_ []keylink) {
 			if t.p.IsLeaf(off) {
 				if back {
 					i--
-				} else {
-					if eq {
-						i++
-					}
+				} else if eq {
+					i++
 				}
 				if i < 0 || i >= n {
 					up = true

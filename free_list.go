@@ -124,7 +124,7 @@ next:
 
 	if l.lock {
 		l.deferred = append(l.deferred, newkv(key, nil))
-		//log.Printf("alloc (defer) %x  now len %d%v", off, len(l.deferred), callers(0))
+		//	log.Printf("alloc (defer) %x  now len %d%v", off, len(l.deferred), callers(0))
 		return off, nil
 	}
 
@@ -157,7 +157,7 @@ func (l *TreeFreelist) Free(n int, off, ver int64) error {
 
 	if l.lock {
 		l.deferred = append(l.deferred, kv)
-		//log.Printf("free  (defer) %x  now len %d%v", off, len(l.deferred), callers(0))
+		//	log.Printf("free  (defer) %x  now len %d%v", off, len(l.deferred), callers(0))
 		return nil
 	}
 
@@ -243,15 +243,16 @@ func growFile(b Back, page, sz int64) (flen int64, err error) {
 	}
 
 	for flen < sz {
-		if flen < 4*page {
+		switch {
+		case flen < 4*page:
 			flen = 4 * page
-		} else if flen < 64*KiB {
+		case flen < 64*KiB:
 			flen *= 2
-		} else if flen < 100*MiB {
+		case flen < 100*MiB:
 			flen += flen / 4
-		} else if flen < GiB {
+		case flen < GiB:
 			flen += flen / 16
-		} else {
+		default:
 			flen += GiB / 16 // 64 MiB
 		}
 
