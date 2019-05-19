@@ -2,10 +2,7 @@ package xrain
 
 import (
 	"encoding/binary"
-	"errors"
 )
-
-var ErrBucketAlreadyExists = errors.New("bucket already exists")
 
 type (
 	NewBucketFunc func(tx *Tx, t Tree) Bucket

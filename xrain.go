@@ -19,17 +19,21 @@ var (
 	DefaultPageSize int64 = 0x1000 // 4 KiB
 
 	CRCTable = crc64.MakeTable(crc64.ECMA)
+)
 
-	ErrPageChecksum = errors.New("page checksum mismatch")
+var (
+	ErrPageChecksum        = errors.New("page checksum mismatch")
+	ErrBucketAlreadyExists = errors.New("bucket already exists")
 )
 
 /*
 	Root page layout
-00: xrainVVVPPPPPPP\n // VVV - Version, PPPPPPP - page size in hex
-10: <crc64> <page>
-20: <ver>   _
-30: <freelist>
-xx: <tree>
+
+	00: xrainVVVPPPPPPP\n // VVV - Version, PPPPPPP - page size in hex
+	10: <crc64> <page>
+	20: <ver>   _
+	30: <freelist>
+	xx: <tree>
 */
 
 type (

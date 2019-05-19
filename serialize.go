@@ -20,9 +20,11 @@ type (
 	}
 )
 
-var Serializers = map[string]Serializer{}
+var Serializers map[string]Serializer
 
 func init() {
+	Serializers = make(map[string]Serializer)
+
 	for _, o := range []Serializer{
 		&Freelist2{},
 		&FileTree{},
