@@ -49,12 +49,6 @@ type (
 		wmu sync.Mutex
 	}
 
-	Tx struct {
-		d        *DB
-		t        Tree
-		writable bool
-	}
-
 	Config struct {
 		PageSize int64
 
@@ -100,10 +94,7 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	tr := d.tr
 	d.mu.Unlock()
 
-	tx := &Tx{
-		d: d,
-		t: tr,
-	}
+	tx := newTx(d, tr, false)
 
 	return f(tx)
 }
@@ -120,11 +111,7 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	d.fl.SetVer(ver, keep)
 	d.t.SetVer(ver)
 
-	tx := &Tx{
-		d:        d,
-		t:        d.t,
-		writable: true,
-	}
+	tx := newTx(d, d.t, true)
 
 	err := f(tx)
 	if err != nil {
