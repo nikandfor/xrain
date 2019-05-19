@@ -33,7 +33,7 @@ func TestPageFixedAllocRoot(t *testing.T) {
 	pl.SetKVSize(8, 8, 2)
 	pl.SetVer(3)
 
-	off, err := pl.AllocRoot()
+	off, err := pl.Alloc(false)
 	assert.NoError(t, err)
 
 	b.Access(off, 0x10, func(p []byte) {
@@ -195,10 +195,10 @@ func TestPageFixedFree(t *testing.T) {
 	b := NewMemBack(2 * Page)
 	pl := NewFixedLayout(b, Page, NewEverGrowFreelist(b, Page, 0))
 
-	off, err := pl.AllocRoot()
+	off, err := pl.Alloc(false)
 	assert.NoError(t, err)
 
-	err = pl.Free(off)
+	err = pl.Free(off, false)
 	assert.NoError(t, err)
 }
 

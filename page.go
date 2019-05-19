@@ -12,11 +12,12 @@ type (
 	PageLayout interface {
 		Serializer
 
-		AllocRoot() (int64, error)
-		Free(p int64) error
+		Alloc(leaf bool) (int64, error)
+		Free(p int64, recursive bool) error
 
 		NKeys(p int64) int
 		IsLeaf(p int64) bool
+		SetLeaf(p int64, y bool)
 
 		Search(p int64, k []byte) (i int, eq bool)
 		Key(p int64, i int) []byte
@@ -92,9 +93,18 @@ func (l *BaseLayout) IsLeaf(off int64) (r bool) {
 	return
 }
 
-func (l *BaseLayout) Free(off int64) error {
+func (l *BaseLayout) SetLeaf(off int64, y bool) {
+	l.b.Access(off, 0x10, func(p []byte) {
+		l.setleaf(p, y)
+	})
+}
+
+func (l *BaseLayout) Free(off int64, r bool) error {
 	if l.free == nil {
 		return nil
+	}
+	if r {
+		panic("not supported")
 	}
 
 	var ver int64
@@ -136,6 +146,14 @@ func (l *BaseLayout) alloc(nold, nnew int, off, ver int64) (noff int64, err erro
 
 func (l *BaseLayout) isleaf(p []byte) bool {
 	return p[0]&0x80 == 0
+}
+
+func (l *BaseLayout) setleaf(p []byte, y bool) {
+	if y {
+		p[0] &^= 0x80
+	} else {
+		p[0] |= 0x80
+	}
 }
 
 func (l *BaseLayout) getver(p []byte) int64 {
@@ -207,6 +225,38 @@ func (l *FixedLayout) SetKVSize(k, v, pm int) {
 	l.p = l.page * int64(pm)
 }
 
+func (l *FixedLayout) Free(off int64, r bool) (err error) {
+	if !r {
+		return l.BaseLayout.Free(off, false)
+	}
+
+	var sub []int64
+	l.b.Access(off, l.p, func(p []byte) {
+		if l.isleaf(p) {
+			return
+		}
+		n := l.nkeys(p)
+		if n == 0 {
+			return
+		}
+
+		sub = make([]int64, n)
+		for i := 0; i < n; i++ {
+			s := 16 + i*(l.k+8) + l.k
+			sub[i] = int64(binary.BigEndian.Uint64(p[s : s+8]))
+		}
+	})
+
+	for _, off := range sub {
+		err = l.BaseLayout.Free(off, true)
+		if err != nil {
+			return
+		}
+	}
+
+	return l.BaseLayout.Free(off, false)
+}
+
 func (l *FixedLayout) setheader(p []byte) {
 	l.setver(p, l.ver)
 	l.setextended(p, l.pm)
@@ -216,13 +266,13 @@ func (l *FixedLayout) alloc(off, ver int64) (_ int64, err error) {
 	return l.BaseLayout.alloc(l.pm, l.pm, off, ver)
 }
 
-func (l *FixedLayout) AllocRoot() (int64, error) {
+func (l *FixedLayout) Alloc(leaf bool) (int64, error) {
 	off, err := l.alloc(NilPage, 0)
 	if err != nil {
 		return NilPage, err
 	}
 	l.b.Access(off, 0x10, func(p []byte) {
-		p[0] = 0x80
+		l.setleaf(p, leaf)
 		l.setsize(p, 0)
 		l.setheader(p)
 	})

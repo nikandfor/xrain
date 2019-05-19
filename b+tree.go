@@ -410,7 +410,7 @@ func (t *FileTree) out(s []keylink, l, r int64) (err error) {
 	}
 
 	if r == NilPage && !t.p.IsLeaf(l) && t.p.NKeys(l) == 1 {
-		err = t.p.Free(l)
+		err = t.p.Free(l, false)
 		if err != nil {
 			return err
 		}
@@ -420,7 +420,7 @@ func (t *FileTree) out(s []keylink, l, r int64) (err error) {
 	}
 
 	if r != NilPage {
-		off, err := t.p.AllocRoot()
+		off, err := t.p.Alloc(false)
 		if err != nil {
 			return err
 		}
