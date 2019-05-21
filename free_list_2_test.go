@@ -126,8 +126,6 @@ func TestFreelist2AllocPow(t *testing.T) {
 	next := tr.Next(nil)
 	assert.NotNil(t, next, "non-nil freelist expected")
 
-	fl.SetVer(3, 2)
-
 	off, err = fl.Alloc(1)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(0*Page), off, "%x != %x", 0*Page, off)
@@ -172,8 +170,6 @@ func TestFreelist2Alloc2(t *testing.T) {
 	off, err := fl.Alloc(5)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(8*Page), off, "%x != %x", 8*Page, off)
-
-	fl.SetVer(3, 2)
 
 	off, err = fl.Alloc(1)
 	assert.NoError(t, err)

@@ -75,9 +75,9 @@ func (l *Freelist2) Serialize(p []byte) int {
 }
 
 func (l *Freelist2) Alloc(n int) (off int64, err error) {
-	//	log.Printf("alloc: %2x       ver %d/%d next %x  def %x", n, l.ver, l.keep, l.next, l.deferred)
+	//	log.Printf("alloc: %2x       ver %d/%d next %x def %x", n, l.ver, l.keep, l.next, l.deferred)
 	//	defer func() {
-	//		log.Printf("alloc: %2x %4x  ver %d/%d next %x", n, off, l.ver, l.keep, l.next)
+	//		log.Printf("alloc: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
 	//	}()
 
 	nsize := nsize(n)
@@ -91,7 +91,7 @@ func (l *Freelist2) Alloc(n int) (off int64, err error) {
 		if _, ok := used[kv.k]; ok {
 			continue
 		}
-		if kv.v >= l.keep {
+		if kv.v >= l.keep && kv.v != l.ver {
 			continue
 		}
 
@@ -131,7 +131,7 @@ next:
 
 	vbytes := l.t.Get(key)
 	ver := int64(binary.BigEndian.Uint64(vbytes))
-	if ver >= l.keep {
+	if ver >= l.keep && ver != l.ver {
 		goto next
 	}
 
@@ -187,8 +187,9 @@ func (l *Freelist2) allocGrow(n int) (off int64, err error) {
 }
 
 func (l *Freelist2) Free(n int, off, ver int64) (err error) {
+	//	log.Printf("free>: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
 	//	defer func() {
-	//		log.Printf("free : %d %x  ver %d/%d next %x", n, off, l.ver, l.keep, l.next)
+	//		log.Printf("free<: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
 	//	}()
 
 	if ver == 0 { // 0 is a special value
