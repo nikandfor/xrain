@@ -24,11 +24,14 @@ type (
 		Key(p int64, i int) []byte
 		LastKey(p int64) []byte
 
-		Value(p int64, i int) []byte
+		Value(p int64, i int, f func(v []byte, f int))
+		ValueCopy(p int64, i int) []byte
 		Int64(p int64, i int) int64
 
-		Put(p int64, i int, k, v []byte) (l, r int64, _ error)
-		PutInt64(p int64, i int, k []byte, v int64) (l, r int64, _ error)
+		Insert(p int64, i, kl, vl, flags int, f func(k, v []byte)) (l, r int64, _ error)
+
+		Put(p int64, i int, k, v []byte) (loff, roff int64, _ error)
+		PutInt64(p int64, i int, k []byte, v int64) (loff, roff int64, _ error)
 		Del(p int64, i int) (int64, error)
 
 		NeedRebalance(p int64) bool
@@ -343,40 +346,37 @@ func (l *FixedLayout) LastKey(off int64) (r []byte) {
 	return
 }
 
-func (l *FixedLayout) Value(off int64, i int) (r []byte) {
+func (l *FixedLayout) Value(off int64, i int, f func(v []byte, flags int)) {
 	v := l.v
-	if v < 8 {
-		v = 8
-	}
-	r = make([]byte, v)
 
 	l.b.Access(off, l.p, func(p []byte) {
-		v := l.v
 		if !l.isleaf(p) {
 			v = 8
 		}
 		s := 16 + i*(l.k+v) + l.k
 
-		copy(r, p[s:s+v])
+		f(p[s:s+v], 0)
 	})
 
 	return
 }
 
 func (l *FixedLayout) Int64(off int64, i int) (r int64) {
-	l.b.Access(off, l.p, func(p []byte) {
-		v := 8
-		if l.isleaf(p) {
-			v = l.v
-			if v < 8 {
-				panic(l.v)
-			}
-		}
-		s := 16 + i*(l.k+v) + l.k
-
-		r = int64(binary.BigEndian.Uint64(p[s : s+v]))
+	l.Value(off, i, func(v []byte, flags int) {
+		r = int64(binary.BigEndian.Uint64(v))
 	})
+	return
+}
 
+func (l *FixedLayout) ValueCopy(off int64, i int) (r []byte) {
+	v := l.v
+	if v < 8 {
+		v = 8
+	}
+	r = make([]byte, v)
+	l.Value(off, i, func(v []byte, flags int) {
+		copy(r, v)
+	})
 	return
 }
 
@@ -419,7 +419,7 @@ again:
 	return off, nil
 }
 
-func (l *FixedLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err error) {
+func (l *FixedLayout) Insert(off int64, i, _, _, flags int, f func(k, v []byte)) (loff, roff int64, err error) {
 	loff = off
 	var ver int64
 	var alloc, split bool
@@ -443,7 +443,7 @@ again:
 
 		if st < len(p) {
 			if ver == l.ver {
-				l.putPage(p, kv, i, n, k, v)
+				l.insertPage(p, i, n, f)
 			}
 		} else {
 			split = true
@@ -489,28 +489,35 @@ again:
 		copy(rp[16:], lp[16+m*kv:16+n*kv])
 
 		if i <= m {
-			l.putPage(lp, kv, i, m, k, v)
+			l.insertPage(lp, i, m, f)
 		} else {
-			l.putPage(rp, kv, i-m, n-m, k, v)
+			l.insertPage(rp, i-m, n-m, f)
 		}
 	})
 
 	return
 }
 
-func (l *FixedLayout) putPage(p []byte, kv, i, n int, k, v []byte) {
-	st := 16 + i*kv
-	end := 16 + n*kv
-	copy(p[st+kv:], p[st:end])
-	copy(p[st:], k)
-	copy(p[st+l.k:], v)
+func (l *FixedLayout) insertPage(p []byte, i, n int, f func(k, v []byte)) {
+	st := 16 + i*l.kv
+	end := 16 + n*l.kv
+	copy(p[st+l.kv:], p[st:end])
+	f(p[st:st+l.k], p[st+l.k:st+l.kv])
 	l.setsize(p, n+1)
 }
 
+func (l *FixedLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err error) {
+	return l.Insert(off, i, 0, 0, 0, func(km, vm []byte) {
+		copy(km, k)
+		copy(vm, v)
+	})
+}
+
 func (l *FixedLayout) PutInt64(off int64, i int, k []byte, v int64) (loff, roff int64, err error) {
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], uint64(v))
-	return l.Put(off, i, k, buf[:])
+	return l.Insert(off, i, 0, 0, 0, func(km, vm []byte) {
+		copy(km, k)
+		binary.BigEndian.PutUint64(vm, uint64(v))
+	})
 }
 
 func (l *FixedLayout) NeedRebalance(off int64) (r bool) {
@@ -523,15 +530,20 @@ func (l *FixedLayout) NeedRebalance(off int64) (r bool) {
 }
 
 func (l *FixedLayout) Siblings(off int64, i int, poff int64) (li int, loff, roff int64) {
+	readoff := func(p []byte, i int) int64 {
+		s := 16 + i*(l.k+8) + l.k
+		return int64(binary.BigEndian.Uint64(p[s:]))
+	}
+
 	l.b.Access(off, l.p, func(p []byte) {
 		n := l.nkeys(p)
 		if i+1 < n && i&1 == 0 {
 			li = i
 			loff = poff
-			roff = l.Int64(off, i+1)
+			roff = readoff(p, i+1)
 		} else {
 			li = i - 1
-			loff = l.Int64(off, i-1)
+			loff = readoff(p, i-1)
 			roff = poff
 		}
 	})
