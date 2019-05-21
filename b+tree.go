@@ -5,8 +5,6 @@ import (
 	"log"
 )
 
-var checkTree func(t *FileTree)
-
 type (
 	Tree interface {
 		Serializer
@@ -37,8 +35,6 @@ type (
 
 		size  int
 		depth int
-
-		dd map[string]string
 	}
 
 	keylink int64
@@ -54,13 +50,6 @@ func NewTree(p PageLayout, root, page int64) *FileTree {
 		p:    p,
 		root: root,
 		mask: mask,
-	}
-
-	if checkTree != nil {
-		t.dd = make(map[string]string)
-		for k := t.Next(nil); k != nil; k = t.Next(k) {
-			t.dd[string(k)] = string(t.Get(k))
-		}
 	}
 
 	return t
@@ -123,7 +112,7 @@ func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 	i := last.Index(t.mask)
 
 	if eq {
-		old = t.p.Value(off, i)
+		old = t.p.ValueCopy(off, i)
 
 		off, err = t.p.Del(off, i)
 		if err != nil {
@@ -134,10 +123,6 @@ func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 	l, r, err := t.p.Put(off, i, k, v)
 	if err != nil {
 		return
-	}
-
-	if checkTree != nil {
-		t.dd[string(k)] = string(v)
 	}
 
 	if !eq {
@@ -162,15 +147,11 @@ func (t *FileTree) Del(k []byte) (old []byte, err error) {
 	off := last.Off(t.mask)
 	i := last.Index(t.mask)
 
-	old = t.p.Value(off, i)
+	old = t.p.ValueCopy(off, i)
 
 	l, err := t.p.Del(off, i)
 	if err != nil {
 		return
-	}
-
-	if checkTree != nil {
-		delete(t.dd, string(k))
 	}
 
 	t.size--
@@ -190,7 +171,7 @@ func (t *FileTree) Get(k []byte) (v []byte) {
 	off := last.Off(t.mask)
 	i := last.Index(t.mask)
 
-	return t.p.Value(off, i)
+	return t.p.ValueCopy(off, i)
 }
 
 func (t *FileTree) Next(k []byte) []byte {
@@ -447,21 +428,6 @@ func (t *FileTree) out(s []keylink, l, r int64) (err error) {
 
 	//	log.Printf("root   %4x <- %4x%v\n%v", l, t.root, callers(-1), dumpFile(t.p))
 	t.root = l
-
-	if checkTree != nil {
-		checkTree(t)
-
-		cnt := 0
-		for k := t.Next(nil); k != nil; k = t.Next(k) {
-			cnt++
-			if v, ok := t.dd[string(k)]; !ok || v != string(t.Get(k)) {
-				log.Fatalf("data mismatch (root %x): %x -> %x != %x (%v)", t.root, k, t.Get(k), []byte(v), ok)
-			}
-		}
-		if cnt != len(t.dd) {
-			log.Fatalf("data mismatch: expected %d keys, have %d", len(t.dd), cnt)
-		}
-	}
 
 	return nil
 }

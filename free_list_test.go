@@ -42,13 +42,6 @@ func TestDumpFreelist(t *testing.T) {
 }
 
 func TestFreelistAuto(t *testing.T) {
-	defer func() {
-		checkTree = nil
-	}()
-	checkTree = func(t *FileTree) {
-		//	log.Printf("tree checked")
-	}
-
 	const (
 		Page = 0x80
 		N    = 30
