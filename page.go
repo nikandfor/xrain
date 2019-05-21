@@ -121,26 +121,20 @@ func (l *BaseLayout) Free(off int64, r bool) error {
 	return l.free.Free(n, off, ver)
 }
 
-func (l *BaseLayout) alloc(nold, nnew int, off, ver int64) (noff int64, err error) {
+func (l *BaseLayout) alloc(nold, nnew int, off, ver int64, f func(noff, off int64)) (noff int64, err error) {
 	noff, err = l.free.Alloc(nnew)
 	if err != nil {
 		return
 	}
-
 	if off == NilPage {
 		return noff, nil
 	}
 
-	err = l.free.Free(nold, off, ver)
-	if err != nil {
-		return
+	if f != nil {
+		f(noff, off)
 	}
 
-	min := nold
-	if nnew < min {
-		min = nnew
-	}
-	err = l.b.Copy(noff, off, int64(min)*l.page)
+	err = l.free.Free(nold, off, ver)
 	if err != nil {
 		return
 	}
@@ -276,12 +270,12 @@ func (l *FixedLayout) setheader(p []byte) {
 	l.setextended(p, l.pm)
 }
 
-func (l *FixedLayout) alloc(off, ver int64) (_ int64, err error) {
-	return l.BaseLayout.alloc(l.pm, l.pm, off, ver)
+func (l *FixedLayout) alloc(off, ver int64, f func(noff, off int64)) (_ int64, err error) {
+	return l.BaseLayout.alloc(l.pm, l.pm, off, ver, f)
 }
 
 func (l *FixedLayout) Alloc(leaf bool) (int64, error) {
-	off, err := l.alloc(NilPage, 0)
+	off, err := l.alloc(NilPage, 0, nil)
 	if err != nil {
 		return NilPage, err
 	}
@@ -409,7 +403,7 @@ again:
 		l.setsize(p, n-1)
 	})
 	if alloc {
-		off, err = l.alloc(off, ver)
+		off, err = l.alloc(off, ver, l.copyPage)
 		if err != nil {
 			return
 		}
@@ -453,7 +447,7 @@ again:
 		return loff, NilPage, nil
 	}
 	if alloc {
-		loff, err = l.alloc(loff, ver)
+		loff, err = l.alloc(loff, ver, l.copyPage)
 		if err != nil {
 			return
 		}
@@ -462,7 +456,7 @@ again:
 		goto again
 	}
 
-	roff, err = l.alloc(NilPage, 0)
+	roff, err = l.alloc(NilPage, 0, nil)
 	if err != nil {
 		return
 	}
@@ -632,13 +626,13 @@ again:
 		}
 	})
 	if lalloc {
-		loff, err = l.alloc(loff, lver)
+		loff, err = l.alloc(loff, lver, l.copyPage)
 		if err != nil {
 			return
 		}
 	}
 	if ralloc {
-		roff, err = l.alloc(roff, rver)
+		roff, err = l.alloc(roff, rver, l.copyPage)
 		if err != nil {
 			return
 		}
@@ -656,4 +650,10 @@ again:
 	}
 
 	return
+}
+
+func (l *FixedLayout) copyPage(noff, off int64) {
+	l.b.Access2(noff, l.p, off, l.p, func(n, o []byte) {
+		copy(n, o)
+	})
 }
