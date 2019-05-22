@@ -226,7 +226,8 @@ func TestFreelist2Auto(t *testing.T) {
 
 		var walk func(int64)
 		walk = func(r int64) {
-			b.Access(r, 0x10, func(p []byte) {
+			p := b.Access(r, 0x10)
+			{
 				ext := pl.extended(p)
 				tree += 1 << nsize(ext)
 
@@ -238,7 +239,8 @@ func TestFreelist2Auto(t *testing.T) {
 				//		pages[int(r/Page)+i] = '-'
 				//	}
 				copy(sizes[r/Page:], fmt.Sprintf("%x", ext))
-			})
+			}
+			b.Unlock(p)
 
 			if pl.IsLeaf(r) {
 				return
@@ -314,11 +316,11 @@ func TestFreelist2Auto(t *testing.T) {
 			alloc = append(alloc, mem{off: off, n: n})
 
 			//	log.Printf("alloced %d at %x, next: %x", n, off, fl.next)
-			b.Access(off, 0x10, func(p []byte) {
-				pl.setver(p, ver) //nolint:scopelint
-				pl.setextended(p, n)
-				pl.setsize(p, 0)
-			})
+			p := b.Access(off, 0x10)
+			pl.setver(p, ver) //nolint:scopelint
+			pl.setextended(p, n)
+			pl.setsize(p, 0)
+			b.Unlock(p)
 		} else if len(alloc) != 0 {
 			i := rand.Intn(len(alloc))
 			m := alloc[i]
@@ -327,9 +329,9 @@ func TestFreelist2Auto(t *testing.T) {
 			}
 
 			var ver int64
-			b.Access(m.off, 0x10, func(p []byte) {
-				ver = pl.getver(p)
-			})
+			p := b.Access(m.off, 0x10)
+			ver = pl.getver(p)
+			b.Unlock(p)
 
 			err := fl.Free(m.n, m.off, ver)
 			if !assert.NoError(t, err) {

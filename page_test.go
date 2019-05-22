@@ -18,10 +18,10 @@ func TestPageFixedIsLeaf(t *testing.T) {
 	b := NewMemBack(2 * Page)
 	pl := NewFixedLayout(b, Page, NewEverGrowFreelist(b, Page, 0))
 
-	b.Access2(0, 0x10, Page, 0x10, func(l, r []byte) {
-		l[4] = 0x00
-		r[4] = 0x80
-	})
+	l, r := b.Access2(0, 0x10, Page, 0x10)
+	l[4] = 0x00
+	r[4] = 0x80
+	b.Unlock2(l, r)
 
 	assert.Equal(t, true, pl.IsLeaf(0))
 	assert.Equal(t, false, pl.IsLeaf(Page))
@@ -38,11 +38,11 @@ func TestPageFixedAllocRoot(t *testing.T) {
 	off, err := pl.Alloc(false)
 	assert.NoError(t, err)
 
-	b.Access(off, 0x10, func(p []byte) {
-		assert.Equal(t, 0, pl.nkeys(p))
-		assert.Equal(t, int64(3), pl.getver(p))
-		assert.Equal(t, 2, pl.extended(p))
-	})
+	p := b.Access(off, 0x10)
+	assert.Equal(t, 0, pl.nkeys(p))
+	assert.Equal(t, int64(3), pl.getver(p))
+	assert.Equal(t, 2, pl.extended(p))
+	b.Unlock(p)
 }
 
 func TestPageFixedPutOnePage8(t *testing.T) {
@@ -127,7 +127,9 @@ func TestPageFixedPutDelOnePageAlloc8(t *testing.T) {
 
 	pl.ver++
 
-	testPageDelOnePage8(t, off, pl)
+	noff := testPageDelOnePage8(t, off, pl)
+
+	assert.NotEqual(t, off, noff)
 }
 
 func TestPageFixedNeedRebalance8(t *testing.T) {
@@ -315,16 +317,20 @@ func testPagePutInt648(t *testing.T, pl PageLayout) {
 	assert.EqualValues(t, 3, pl.Int64(loff, 2))
 }
 
-func testPageDelOnePage8(t *testing.T, loff int64, pl PageLayout) {
+func testPageDelOnePage8(t *testing.T, loff int64, pl PageLayout) int64 {
 	if !assert.Equal(t, 3, pl.NKeys(loff)) {
-		return
+		return NilPage
 	}
+
+	old := loff
 
 	loff, err := pl.Del(loff, 0)
 	assert.NoError(t, err)
 
+	log.Printf("Del %d, %x <- %x %+v\n%v", pl.(*FixedLayout).ver, loff, old, pl, dumpFile(pl))
+
 	if !assert.Equal(t, 2, pl.NKeys(loff)) {
-		return
+		return NilPage
 	}
 
 	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 0))
@@ -334,7 +340,7 @@ func testPageDelOnePage8(t *testing.T, loff int64, pl PageLayout) {
 	assert.NoError(t, err)
 
 	if !assert.Equal(t, 1, pl.NKeys(loff)) {
-		return
+		return NilPage
 	}
 
 	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 0))
@@ -343,6 +349,8 @@ func testPageDelOnePage8(t *testing.T, loff int64, pl PageLayout) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, 0, pl.NKeys(loff))
+
+	return loff
 }
 
 func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl Freelist, ver *int64, alloc bool) {
@@ -352,11 +360,13 @@ func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl 
 	roff, err := fl.Alloc(1)
 	assert.NoError(t, err)
 
-	b.Access2(loff, 0x10, roff, 0x10, func(l, r []byte) {
-		pl := &BaseLayout{}
-		pl.setver(l, *ver)
-		pl.setver(r, *ver)
-	})
+	{
+		l, r := b.Access2(loff, 0x10, roff, 0x10)
+		bl := &BaseLayout{}
+		bl.setver(l, *ver)
+		bl.setver(r, *ver)
+		b.Unlock2(l, r)
+	}
 
 	v := int64(0)
 

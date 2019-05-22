@@ -1,12 +1,18 @@
 package xrain
 
-import "sync"
+import (
+	"sync"
+)
 
 type (
 	Back interface {
-		Access(off, len int64, f func(p []byte))
-		Access2(off, len, off2, len2 int64, f func(p, p2 []byte))
-		Copy(roff, off, len int64) error
+		Access(off, len int64) []byte
+		Access2(off, len, off2, len2 int64) (p, p2 []byte)
+		Unlock(p []byte)
+		Unlock2(l, r []byte)
+
+		Copy(roff, loff, len int64)
+
 		Size() int64
 		Truncate(size int64) error
 		Sync() error
@@ -24,27 +30,31 @@ func NewMemBack(size int64) *MemBack {
 	}
 }
 
-func (b *MemBack) Access(off, l int64, f func(p []byte)) {
-	defer b.mu.RUnlock()
+func (b *MemBack) Access(off, l int64) []byte {
 	b.mu.RLock()
 
-	f(b.d[off : off+l])
+	return b.d[off : off+l]
 }
 
-func (b *MemBack) Access2(off, l, off2, l2 int64, f func(p, p2 []byte)) {
-	defer b.mu.RUnlock()
+func (b *MemBack) Access2(off, l, off2, l2 int64) (p, p2 []byte) {
 	b.mu.RLock()
 
-	f(b.d[off:off+l], b.d[off2:off2+l2])
+	return b.d[off : off+l], b.d[off2 : off2+l2]
 }
 
-func (b *MemBack) Copy(roff, off, len int64) error {
+func (b *MemBack) Unlock(p []byte) {
+	b.mu.RUnlock()
+}
+
+func (b *MemBack) Unlock2(lp, rp []byte) {
+	b.mu.RUnlock()
+}
+
+func (b *MemBack) Copy(roff, off, len int64) {
 	defer b.mu.RUnlock()
 	b.mu.RLock()
 
 	copy(b.d[roff:], b.d[off:off+len])
-
-	return nil
 }
 
 func (b *MemBack) Truncate(s int64) error {
@@ -58,6 +68,7 @@ func (b *MemBack) Truncate(s int64) error {
 	c := make([]byte, s)
 	copy(c, b.d)
 	b.d = c
+
 	return nil
 }
 

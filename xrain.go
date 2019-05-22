@@ -223,17 +223,19 @@ func (d *DB) updateKeep(ver int64) {
 func (d *DB) writeRoot(ver int64) {
 	n := ver % 2
 
-	d.b.Access(n*d.page, d.page, func(p []byte) {
-		binary.BigEndian.PutUint64(p[0x20:], uint64(ver))
+	p := d.b.Access(n*d.page, d.page)
 
-		s := 0x30
-		s += Serialize(p[s:], d.fl)
-		s += Serialize(p[s:], d.t)
-		_ = s
+	binary.BigEndian.PutUint64(p[0x20:], uint64(ver))
 
-		sum := crc64.Checksum(p[0x18:], CRCTable)
-		binary.BigEndian.PutUint64(p[0x10:], sum)
-	})
+	s := 0x30
+	s += Serialize(p[s:], d.fl)
+	s += Serialize(p[s:], d.t)
+	_ = s
+
+	sum := crc64.Checksum(p[0x18:], CRCTable)
+	binary.BigEndian.PutUint64(p[0x10:], sum)
+
+	d.b.Unlock(p)
 }
 
 func (d *DB) initParts0() {
@@ -281,15 +283,17 @@ func (d *DB) initEmpty() (err error) {
 		panic(len(h0))
 	}
 
-	d.b.Access(0, 2*d.page, func(p []byte) {
-		copy(p, h0)
-		copy(p[d.page:], h0)
+	p := d.b.Access(0, 2*d.page)
 
-		for _, off := range []int64{0, d.page} {
-			s := off + 0x18
-			binary.BigEndian.PutUint64(p[s:], uint64(d.page))
-		}
-	})
+	copy(p, h0)
+	copy(p[d.page:], h0)
+
+	for _, off := range []int64{0, d.page} {
+		s := off + 0x18
+		binary.BigEndian.PutUint64(p[s:], uint64(d.page))
+	}
+
+	d.b.Unlock(p)
 
 	d.writeRoot(0)
 
@@ -305,7 +309,8 @@ func (d *DB) initExisting() (err error) {
 
 again:
 	retry := false
-	d.b.Access(0, 2*d.page, func(p []byte) {
+	p := d.b.Access(0, 2*d.page)
+	{
 		d.ver = int64(binary.BigEndian.Uint64(p[0x20:]))
 		if ver := int64(binary.BigEndian.Uint64(p[d.page+0x20:])); ver > d.ver {
 			d.ver = ver
@@ -352,7 +357,8 @@ again:
 		s += ss
 
 		_ = s
-	})
+	}
+	d.b.Unlock(p)
 	if retry {
 		goto again
 	}
@@ -423,7 +429,8 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 
 	var size int
 
-	b.Access(off, page, func(p []byte) {
+	p := b.Access(off, page)
+	{
 		tp := 'B'
 		if l.IsLeaf(off) {
 			tp = 'D'
@@ -458,7 +465,8 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 				}
 			}
 		}
-	})
+	}
+	b.Unlock(p)
 
 	return buf.String(), base.page * int64(size)
 }
@@ -482,11 +490,11 @@ func dumpFile(l PageLayout) string {
 	sz := b.Size()
 	off := int64(0)
 	if sz > 0 {
-		b.Access(0, 0x10, func(p []byte) {
-			if bytes.HasPrefix(p, []byte("xrain")) {
-				off = 2 * page
-			}
-		})
+		p := b.Access(0, 0x10)
+		if bytes.HasPrefix(p, []byte("xrain")) {
+			off = 2 * page
+		}
+		b.Unlock(p)
 	}
 
 	for off < sz {

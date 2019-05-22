@@ -15,44 +15,39 @@ func TestMemBack(t *testing.T) {
 	err := b.Truncate(0x200)
 	assert.NoError(t, err)
 
-	b.Access(0x100, 0x100, func(p []byte) {
-		copy(p, "PAGE2 content")
-	})
+	p := b.Access(0x100, 0x100)
+	copy(p, "PAGE2 content")
+	b.Unlock(p)
 
-	b.Access(0x0, 0x10, func(p []byte) {
-		copy(p, "PAGE1 content")
-	})
+	p = b.Access(0x0, 0x10)
+	copy(p, "PAGE1 content")
+	b.Unlock(p)
 
 	err = b.Sync()
 	assert.NoError(t, err)
 
-	b.Access2(0x0, 0x10, 0x100, 0x10, func(lp, rp []byte) {
-		r := bytes.HasPrefix(lp, []byte("PAGE1 content"))
-		assert.True(t, r)
+	lp, rp := b.Access2(0x0, 0x10, 0x100, 0x10)
+	r := bytes.HasPrefix(lp, []byte("PAGE1 content"))
+	assert.True(t, r)
 
-		r = bytes.HasPrefix(rp, []byte("PAGE2 content"))
-		assert.True(t, r)
-	})
+	r = bytes.HasPrefix(rp, []byte("PAGE2 content"))
+	assert.True(t, r)
+	b.Unlock2(lp, rp)
 
-	err = b.Copy(0x100, 0x0, 0x10)
-	assert.NoError(t, err)
+	b.Copy(0x100, 0x0, 0x10)
 
-	b.Access(0x100, 0x10, func(p []byte) {
-		r := bytes.HasPrefix(p, []byte("PAGE1 content"))
-		assert.True(t, r)
-	})
+	p = b.Access(0x100, 0x10)
+	r = bytes.HasPrefix(p, []byte("PAGE1 content"))
+	assert.True(t, r)
+	b.Unlock(p)
 
 	assert.Equal(t, int64(0x200), b.Size())
 
 	err = b.Truncate(0x100)
 	assert.NoError(t, err)
 
-	b.Access(0x0, 0x10, func(p []byte) {
-		r := bytes.HasPrefix(p, []byte("PAGE1 content"))
-		assert.True(t, r)
-	})
-
-	assert.Panics(t, func() {
-		b.Access(0x100, 0x10, nil)
-	})
+	p = b.Access(0x0, 0x10)
+	r = bytes.HasPrefix(p, []byte("PAGE1 content"))
+	assert.True(t, r)
+	b.Unlock(p)
 }

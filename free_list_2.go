@@ -4,6 +4,14 @@ import (
 	"encoding/binary"
 )
 
+const (
+	B = 1 << (10 * iota)
+	KiB
+	MiB
+	GiB
+	TiB
+)
+
 type (
 	Freelist interface {
 		Serializer
@@ -24,6 +32,12 @@ type (
 
 		deferred []kv2
 		lock     bool
+	}
+
+	GrowFreelist struct {
+		b          Back
+		page       int64
+		next, flen int64
 	}
 
 	kv2 struct {
@@ -371,4 +385,80 @@ func align(off, p int64, s uint) (b int64, n int) {
 	}
 
 	return p >> (s - bs), 1 << bs
+}
+
+func NewEverGrowFreelist(b Back, page, next int64) *GrowFreelist {
+	flen := b.Size()
+
+	l := &GrowFreelist{
+		b:    b,
+		page: page,
+		next: flen,
+		flen: flen,
+	}
+
+	return l
+}
+
+func (*GrowFreelist) SerializerName() string {
+	return "GrowFreelist"
+}
+
+func (*GrowFreelist) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
+	next := int64(binary.BigEndian.Uint64(p))
+	l := NewEverGrowFreelist(ctx.Back, ctx.Page, next)
+	return l, 8, nil
+}
+
+func (l *GrowFreelist) Serialize(p []byte) int {
+	binary.BigEndian.PutUint64(p, uint64(l.next))
+	return 8
+}
+
+func (l *GrowFreelist) SetVer(ver, keep int64) {}
+
+func (l *GrowFreelist) Alloc(n int) (off int64, err error) {
+	off = l.next
+	size := int64(n) * l.page
+	l.flen, err = growFile(l.b, l.page, off+size)
+	if err != nil {
+		return 0, err
+	}
+	l.next += size
+
+	return off, nil
+}
+
+func (l *GrowFreelist) Free(n int, off, ver int64) error { return nil }
+
+func growFile(b Back, page, sz int64) (flen int64, err error) {
+	flen = b.Size()
+
+	if sz <= flen {
+		return
+	}
+
+	for flen < sz {
+		switch {
+		case flen < 4*page:
+			flen = 4 * page
+		case flen < 64*KiB:
+			flen *= 2
+		case flen < 100*MiB:
+			flen += flen / 4
+		case flen < GiB:
+			flen += flen / 16
+		default:
+			flen += GiB / 16 // 64 MiB
+		}
+
+		flen -= flen % page
+	}
+
+	err = b.Truncate(flen)
+	if err != nil {
+		return
+	}
+
+	return
 }

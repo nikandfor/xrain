@@ -84,23 +84,23 @@ func (l *BaseLayout) SetFreelist(fl Freelist) {
 }
 
 func (l *BaseLayout) NKeys(off int64) (r int) {
-	l.b.Access(off, 0x10, func(p []byte) {
-		r = int(p[4])&^0x80<<8 | int(p[5])
-	})
-	return
+	p := l.b.Access(off, 0x10)
+	r = int(p[4])&^0x80<<8 | int(p[5])
+	l.b.Unlock(p)
+	return r
 }
 
 func (l *BaseLayout) IsLeaf(off int64) (r bool) {
-	l.b.Access(off, 0x10, func(p []byte) {
-		r = l.isleaf(p)
-	})
-	return
+	p := l.b.Access(off, 0x10)
+	r = l.isleaf(p)
+	l.b.Unlock(p)
+	return r
 }
 
 func (l *BaseLayout) SetLeaf(off int64, y bool) {
-	l.b.Access(off, 0x10, func(p []byte) {
-		l.setleaf(p, y)
-	})
+	p := l.b.Access(off, 0x10)
+	l.setleaf(p, y)
+	l.b.Unlock(p)
 }
 
 func (l *BaseLayout) Free(off int64, r bool) error {
@@ -111,35 +111,25 @@ func (l *BaseLayout) Free(off int64, r bool) error {
 		panic("not supported")
 	}
 
-	var ver int64
-	var n int
-	l.b.Access(off, 0x10, func(p []byte) {
-		ver = l.getver(p)
-		n = l.extended(p)
-	})
+	p := l.b.Access(off, 0x10)
+	ver := l.getver(p)
+	n := l.extended(p)
+	l.b.Unlock(p)
 
 	return l.free.Free(n, off, ver)
 }
 
-func (l *BaseLayout) alloc(nold, nnew int, off, ver int64, f func(noff, off int64)) (noff int64, err error) {
-	noff, err = l.free.Alloc(nnew)
-	if err != nil {
-		return
-	}
-	if off == NilPage {
-		return noff, nil
-	}
-
-	if f != nil {
-		f(noff, off)
-	}
-
-	err = l.free.Free(nold, off, ver)
+func (l *BaseLayout) realloc(n int, off, ver int64) (noff int64, err error) {
+	noff, err = l.free.Alloc(n)
 	if err != nil {
 		return
 	}
 
-	return noff, nil
+	l.b.Copy(noff, off, int64(n)*l.page)
+
+	err = l.free.Free(n, off, ver)
+
+	return
 }
 
 func (l *BaseLayout) isleaf(p []byte) bool {
@@ -239,7 +229,8 @@ func (l *FixedLayout) Free(off int64, r bool) (err error) {
 	}
 
 	var sub []int64
-	l.b.Access(off, l.p, func(p []byte) {
+	p := l.b.Access(off, l.p)
+	func() {
 		if l.isleaf(p) {
 			return
 		}
@@ -253,7 +244,8 @@ func (l *FixedLayout) Free(off int64, r bool) (err error) {
 			s := 16 + i*(l.k+8) + l.k
 			sub[i] = int64(binary.BigEndian.Uint64(p[s : s+8]))
 		}
-	})
+	}()
+	l.b.Unlock(p)
 
 	for _, off := range sub {
 		err = l.BaseLayout.Free(off, true)
@@ -270,56 +262,58 @@ func (l *FixedLayout) setheader(p []byte) {
 	l.setextended(p, l.pm)
 }
 
-func (l *FixedLayout) alloc(off, ver int64, f func(noff, off int64)) (_ int64, err error) {
-	return l.BaseLayout.alloc(l.pm, l.pm, off, ver, f)
-}
-
 func (l *FixedLayout) Alloc(leaf bool) (int64, error) {
-	off, err := l.alloc(NilPage, 0, nil)
+	off, err := l.free.Alloc(l.pm)
 	if err != nil {
 		return NilPage, err
 	}
-	l.b.Access(off, 0x10, func(p []byte) {
-		l.setleaf(p, leaf)
-		l.setsize(p, 0)
-		l.setheader(p)
-	})
+	p := l.b.Access(off, 0x10)
+	l.setleaf(p, leaf)
+	l.setsize(p, 0)
+	l.setheader(p)
+	l.b.Unlock(p)
 	return off, nil
 }
 
 func (l *FixedLayout) Search(off int64, k []byte) (i int, eq bool) {
-	l.b.Access(off, l.p, func(p []byte) {
-		ln := l.nkeys(p)
-		kv := l.v
-		if !l.isleaf(p) {
-			kv = 8
-		}
-		kv += l.k
-		keycmp := func(i int) int {
-			s := 16 + i*kv
+	p := l.b.Access(off, l.p)
 
-			return bytes.Compare(p[s:s+l.k], k)
-		}
-		i = sort.Search(ln, func(i int) bool {
-			return keycmp(i) >= 0
-		})
-		eq = i < ln && keycmp(i) == 0
+	ln := l.nkeys(p)
+	kv := l.v
+	if !l.isleaf(p) {
+		kv = 8
+	}
+	kv += l.k
+
+	keycmp := func(i int) int {
+		s := 16 + i*kv
+
+		return bytes.Compare(p[s:s+l.k], k)
+	}
+
+	i = sort.Search(ln, func(i int) bool {
+		return keycmp(i) >= 0
 	})
+
+	eq = i < ln && keycmp(i) == 0
+
+	l.b.Unlock(p)
+
 	return
 }
 
 func (l *FixedLayout) Key(off int64, i int) (r []byte) {
 	r = make([]byte, l.k)
 
-	l.b.Access(off, l.p, func(p []byte) {
-		v := l.v
-		if !l.isleaf(p) {
-			v = 8
-		}
-		s := 16 + i*(l.k+v)
+	p := l.b.Access(off, l.p)
+	v := l.v
+	if !l.isleaf(p) {
+		v = 8
+	}
+	s := 16 + i*(l.k+v)
 
-		copy(r, p[s:s+l.k])
-	})
+	copy(r, p[s:s+l.k])
+	l.b.Unlock(p)
 
 	return
 }
@@ -327,16 +321,16 @@ func (l *FixedLayout) Key(off int64, i int) (r []byte) {
 func (l *FixedLayout) LastKey(off int64) (r []byte) {
 	r = make([]byte, l.v)
 
-	l.b.Access(off, l.p, func(p []byte) {
-		v := l.v
-		if !l.isleaf(p) {
-			v = 8
-		}
-		i := l.nkeys(p) - 1
-		s := 16 + i*(l.k+v)
+	p := l.b.Access(off, l.p)
+	v := l.v
+	if !l.isleaf(p) {
+		v = 8
+	}
+	i := l.nkeys(p) - 1
+	s := 16 + i*(l.k+v)
 
-		copy(r, p[s:s+l.k])
-	})
+	copy(r, p[s:s+l.k])
+	l.b.Unlock(p)
 
 	return
 }
@@ -344,14 +338,14 @@ func (l *FixedLayout) LastKey(off int64) (r []byte) {
 func (l *FixedLayout) Value(off int64, i int, f func(v []byte)) {
 	v := l.v
 
-	l.b.Access(off, l.p, func(p []byte) {
-		if !l.isleaf(p) {
-			v = 8
-		}
-		s := 16 + i*(l.k+v) + l.k
+	p := l.b.Access(off, l.p)
+	if !l.isleaf(p) {
+		v = 8
+	}
+	s := 16 + i*(l.k+v) + l.k
 
-		f(p[s : s+v])
-	})
+	f(p[s : s+v])
+	l.b.Unlock(p)
 
 	return
 }
@@ -379,7 +373,8 @@ func (l *FixedLayout) Del(off int64, i int) (_ int64, err error) {
 	var ver int64
 	var alloc bool
 again:
-	l.b.Access(off, l.p, func(p []byte) {
+	p := l.b.Access(off, l.p)
+	func() {
 		if alloc {
 			l.setheader(p)
 			alloc = false
@@ -402,9 +397,11 @@ again:
 
 		copy(p[st:], p[st+kv:end])
 		l.setsize(p, n-1)
-	})
+	}()
+	l.b.Unlock(p)
+
 	if alloc {
-		off, err = l.alloc(off, ver, l.copyPage)
+		off, err = l.realloc(l.pm, off, ver)
 		if err != nil {
 			return
 		}
@@ -419,7 +416,8 @@ func (l *FixedLayout) Insert(off int64, i, _, _ int, f func(k, v []byte)) (loff,
 	var ver int64
 	var alloc, split bool
 again:
-	l.b.Access(loff, l.p, func(p []byte) {
+	p := l.b.Access(loff, l.p)
+	func() {
 		if alloc {
 			l.setheader(p)
 			ver = l.ver
@@ -443,26 +441,29 @@ again:
 		} else {
 			split = true
 		}
-	})
+	}()
+	l.b.Unlock(p)
 	if !alloc && !split {
 		return loff, NilPage, nil
 	}
 	if alloc {
-		loff, err = l.alloc(loff, ver, l.copyPage)
+		loff, err = l.realloc(l.pm, loff, ver)
 		if err != nil {
 			return
 		}
+		goto again
 	}
 	if !split {
 		goto again
 	}
 
-	roff, err = l.alloc(NilPage, 0, nil)
+	roff, err = l.free.Alloc(l.pm)
 	if err != nil {
 		return
 	}
 
-	l.b.Access2(loff, l.p, roff, l.p, func(lp, rp []byte) {
+	lp, rp := l.b.Access2(loff, l.p, roff, l.p)
+	func() {
 		rp[4] = lp[4]
 		l.setheader(lp)
 		l.setheader(rp)
@@ -488,7 +489,8 @@ again:
 		} else {
 			l.insertPage(rp, i-m, n-m, f)
 		}
-	})
+	}()
+	l.b.Unlock2(lp, rp)
 
 	return
 }
@@ -516,11 +518,11 @@ func (l *FixedLayout) PutInt64(off int64, i int, k []byte, v int64) (loff, roff 
 }
 
 func (l *FixedLayout) NeedRebalance(off int64) (r bool) {
-	l.b.Access(off, l.p, func(p []byte) {
-		n := l.nkeys(p)
-		end := 16 + n*16
-		r = end < len(p)*2/5
-	})
+	p := l.b.Access(off, l.p)
+	n := l.nkeys(p)
+	end := 16 + n*16
+	r = end < len(p)*2/5
+	l.b.Unlock(p)
 	return
 }
 
@@ -530,18 +532,18 @@ func (l *FixedLayout) Siblings(off int64, i int, poff int64) (li int, loff, roff
 		return int64(binary.BigEndian.Uint64(p[s:]))
 	}
 
-	l.b.Access(off, l.p, func(p []byte) {
-		n := l.nkeys(p)
-		if i+1 < n && i&1 == 0 {
-			li = i
-			loff = poff
-			roff = readoff(p, i+1)
-		} else {
-			li = i - 1
-			loff = readoff(p, i-1)
-			roff = poff
-		}
-	})
+	p := l.b.Access(off, l.p)
+	n := l.nkeys(p)
+	if i+1 < n && i&1 == 0 {
+		li = i
+		loff = poff
+		roff = readoff(p, i+1)
+	} else {
+		li = i - 1
+		loff = readoff(p, i-1)
+		roff = poff
+	}
+	l.b.Unlock(p)
 	return
 }
 
@@ -551,7 +553,8 @@ func (l *FixedLayout) Rebalance(lpoff, rpoff int64) (loff, roff int64, err error
 	var rfree bool
 	var lver, rver int64
 again:
-	l.b.Access2(loff, l.p, roff, l.p, func(lp, rp []byte) {
+	lp, rp := l.b.Access2(loff, l.p, roff, l.p)
+	func() {
 		kv := l.kv
 		if !l.isleaf(lp) {
 			kv = l.k + 8
@@ -625,15 +628,16 @@ again:
 			l.setsize(rp, m)
 			l.setsize(lp, sum-m)
 		}
-	})
+	}()
+	l.b.Unlock2(lp, rp)
 	if lalloc {
-		loff, err = l.alloc(loff, lver, l.copyPage)
+		loff, err = l.realloc(l.pm, loff, rver)
 		if err != nil {
 			return
 		}
 	}
 	if ralloc {
-		roff, err = l.alloc(roff, rver, l.copyPage)
+		roff, err = l.realloc(l.pm, roff, rver)
 		if err != nil {
 			return
 		}
@@ -654,7 +658,5 @@ again:
 }
 
 func (l *FixedLayout) copyPage(noff, off int64) {
-	l.b.Access2(noff, l.p, off, l.p, func(n, o []byte) {
-		copy(n, o)
-	})
+	l.b.Copy(noff, off, l.p)
 }

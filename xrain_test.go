@@ -84,9 +84,9 @@ func TestXRainSmoke(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	b.Access2(0, 0x40, Page, 0x40, func(l, r []byte) {
-		log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
-	})
+	l, r := b.Access2(0, 0x40, Page, 0x40)
+	log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+	b.Unlock2(l, r)
 	log.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
 }
 
