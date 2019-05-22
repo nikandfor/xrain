@@ -52,7 +52,7 @@ func TestXRainSmoke(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	err = db.UpdateNoBatching(func(tx *Tx) error {
+	err = db.Update(func(tx *Tx) error {
 		return tx.Put([]byte("key_aaaa"), []byte("value_aa"))
 	})
 	assert.NoError(t, err)
@@ -72,7 +72,7 @@ func TestXRainSmoke(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	err = db.UpdateNoBatching(func(tx *Tx) error {
+	err = db.Update(func(tx *Tx) error {
 		return tx.Del([]byte("key_aaaa"))
 	})
 	assert.NoError(t, err)
@@ -249,7 +249,7 @@ func (t *HeavyTester) worker(c, r chan HeavyTask) {
 				return nil
 			})
 		case TaskPut:
-			w.Err = t.DB.UpdateNoBatching(func(tx *Tx) error {
+			w.Err = t.DB.Update(func(tx *Tx) error {
 				//	log.Printf("put %x -> %x", w.Key, w.Value)
 				return tx.Put(w.Key, w.Value) //nolint:scopelint
 			})

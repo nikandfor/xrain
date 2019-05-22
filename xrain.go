@@ -42,7 +42,8 @@ type (
 		fl    Freelist
 		t, tr Tree
 
-		nb NewBucketFunc
+		nb     NewBucketFunc
+		nosync bool
 
 		conf *Config
 
@@ -53,11 +54,15 @@ type (
 		keep  int64
 		keepl map[int64]int
 
-		wmu sync.Mutex
+		wcas int32
+
+		wmu  sync.Mutex
+		rwmu sync.RWMutex
 	}
 
 	Config struct {
 		PageSize int64
+		NoSync   bool
 
 		Freelist  Freelist
 		Tree      Tree
@@ -120,7 +125,55 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	return f(tx)
 }
 
-func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
+func (d *DB) Update(f func(tx *Tx) error) error {
+	return d.update0(f)
+}
+
+func (d *DB) update0(f func(tx *Tx) error) (err error) {
+	defer func() {
+		if err == nil && !d.nosync {
+			err = d.b.Sync()
+		}
+	}()
+
+	defer d.wmu.Unlock()
+	d.wmu.Lock()
+
+	d.mu.Lock()
+	ver, keep := d.ver, d.keep
+	d.mu.Unlock()
+	ver++
+
+	d.fl.SetVer(ver, keep)
+	d.t.SetVer(ver)
+
+	tx := newTx(d, d.t, true)
+
+	err = f(tx)
+	if err != nil {
+		return err
+	}
+
+	d.writeRoot(ver)
+
+	tr := d.t.Copy()
+
+	d.mu.Lock()
+	d.ver++
+	d.tr = tr
+	d.updateKeep(0)
+	d.mu.Unlock()
+
+	return nil
+}
+
+func (d *DB) update1(f func(tx *Tx) error) error {
+	//	if atomic.CompareAndSwapInt32(&d.wcas, 0, 1) {
+	//	} else {
+	//	}
+
+	//
+
 	defer d.wmu.Unlock()
 	d.wmu.Lock()
 
@@ -139,6 +192,8 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 		return err
 	}
 
+	//
+
 	d.writeRoot(ver)
 
 	tr := d.t.Copy()
@@ -149,11 +204,7 @@ func (d *DB) UpdateNoBatching(f func(tx *Tx) error) error {
 	d.updateKeep(0)
 	d.mu.Unlock()
 
-	return nil
-}
-
-func (d *DB) Update(f func(tx *Tx) error) error {
-	return d.UpdateNoBatching(f)
+	return d.b.Sync()
 }
 
 func (d *DB) updateKeep(ver int64) {
@@ -380,7 +431,7 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 		ver := base.getver(p)
 		size = base.extended(p)
 		n := l.NKeys(off)
-		fmt.Fprintf(&buf, "%4x: %c ext %2d ver %3d  nkeys %4d  ", off, tp, size, ver, n)
+		fmt.Fprintf(&buf, "%4x: %c ext %2d ver %3d  nkeys %4d  ", off, tp, size-1, ver, n)
 		if kvl != nil {
 			//	fmt.Fprintf(&buf, "datasize %3x free space %3x\n", kvl.datasize(p), len(p)-kvl.datasize(p)-16)
 		} else {
@@ -396,7 +447,7 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 			if l.IsLeaf(off) {
 				for i := 0; i < n; i++ {
 					k := l.Key(off, i)
-					v := l.Value(off, i)
+					v := l.ValueCopy(off, i)
 					fmt.Fprintf(&buf, "    %q -> %q\n", k, v)
 				}
 			} else {
