@@ -24,11 +24,11 @@ type (
 		Key(p int64, i int) []byte
 		LastKey(p int64) []byte
 
-		Value(p int64, i int, f func(v []byte, f int))
+		Value(p int64, i int, f func(v []byte))
 		ValueCopy(p int64, i int) []byte
 		Int64(p int64, i int) int64
 
-		Insert(p int64, i, kl, vl, flags int, f func(k, v []byte)) (l, r int64, _ error)
+		Insert(p int64, i, kl, vl int, f func(k, v []byte)) (l, r int64, _ error)
 
 		Put(p int64, i int, k, v []byte) (loff, roff int64, _ error)
 		PutInt64(p int64, i int, k []byte, v int64) (loff, roff int64, _ error)
@@ -290,12 +290,13 @@ func (l *FixedLayout) Alloc(leaf bool) (int64, error) {
 func (l *FixedLayout) Search(off int64, k []byte) (i int, eq bool) {
 	l.b.Access(off, l.p, func(p []byte) {
 		ln := l.nkeys(p)
+		kv := l.v
+		if !l.isleaf(p) {
+			kv = 8
+		}
+		kv += l.k
 		keycmp := func(i int) int {
-			v := l.v
-			if !l.isleaf(p) {
-				v = 8
-			}
-			s := 16 + i*(l.k+v)
+			s := 16 + i*kv
 
 			return bytes.Compare(p[s:s+l.k], k)
 		}
@@ -340,7 +341,7 @@ func (l *FixedLayout) LastKey(off int64) (r []byte) {
 	return
 }
 
-func (l *FixedLayout) Value(off int64, i int, f func(v []byte, flags int)) {
+func (l *FixedLayout) Value(off int64, i int, f func(v []byte)) {
 	v := l.v
 
 	l.b.Access(off, l.p, func(p []byte) {
@@ -349,14 +350,14 @@ func (l *FixedLayout) Value(off int64, i int, f func(v []byte, flags int)) {
 		}
 		s := 16 + i*(l.k+v) + l.k
 
-		f(p[s:s+v], 0)
+		f(p[s : s+v])
 	})
 
 	return
 }
 
 func (l *FixedLayout) Int64(off int64, i int) (r int64) {
-	l.Value(off, i, func(v []byte, flags int) {
+	l.Value(off, i, func(v []byte) {
 		r = int64(binary.BigEndian.Uint64(v))
 	})
 	return
@@ -368,7 +369,7 @@ func (l *FixedLayout) ValueCopy(off int64, i int) (r []byte) {
 		v = 8
 	}
 	r = make([]byte, v)
-	l.Value(off, i, func(v []byte, flags int) {
+	l.Value(off, i, func(v []byte) {
 		copy(r, v)
 	})
 	return
@@ -413,7 +414,7 @@ again:
 	return off, nil
 }
 
-func (l *FixedLayout) Insert(off int64, i, _, _, flags int, f func(k, v []byte)) (loff, roff int64, err error) {
+func (l *FixedLayout) Insert(off int64, i, _, _ int, f func(k, v []byte)) (loff, roff int64, err error) {
 	loff = off
 	var ver int64
 	var alloc, split bool
@@ -501,14 +502,14 @@ func (l *FixedLayout) insertPage(p []byte, i, n int, f func(k, v []byte)) {
 }
 
 func (l *FixedLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err error) {
-	return l.Insert(off, i, 0, 0, 0, func(km, vm []byte) {
+	return l.Insert(off, i, 0, 0, func(km, vm []byte) {
 		copy(km, k)
 		copy(vm, v)
 	})
 }
 
 func (l *FixedLayout) PutInt64(off int64, i int, k []byte, v int64) (loff, roff int64, err error) {
-	return l.Insert(off, i, 0, 0, 0, func(km, vm []byte) {
+	return l.Insert(off, i, 0, 0, func(km, vm []byte) {
 		copy(km, k)
 		binary.BigEndian.PutUint64(vm, uint64(v))
 	})
