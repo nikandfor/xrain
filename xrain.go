@@ -122,7 +122,7 @@ func (d *DB) View(f func(tx *Tx) error) error {
 
 	tx := newTx(d, tr, false)
 
-	return f(tx)
+	return f(&tx)
 }
 
 func (d *DB) Update(f func(tx *Tx) error) error {
@@ -149,7 +149,7 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 
 	tx := newTx(d, d.t, true)
 
-	err = f(tx)
+	err = f(&tx)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (d *DB) update1(f func(tx *Tx) error) error {
 
 	tx := newTx(d, d.t, true)
 
-	err := f(tx)
+	err := f(&tx)
 	if err != nil {
 		return err
 	}

@@ -197,7 +197,7 @@ func TestFreelist2Alloc2(t *testing.T) {
 
 func TestFreelist2Auto(t *testing.T) {
 	const Page = 0x100
-	const N, M = 1000, 6
+	const N, M = 5000, 6
 	const prOnce, prEach, prCmd = true, false, false
 
 	rnd := rand.New(rand.NewSource(0))

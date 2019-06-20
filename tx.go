@@ -37,12 +37,12 @@ type (
 	}
 )
 
-func newTx(d *DB, t Tree, w bool) *Tx {
-	tx := &Tx{
+func newTx(d *DB, t Tree, w bool) Tx {
+	tx := Tx{
 		d:        d,
 		writable: w,
 	}
-	tx.b = d.nb(tx, t)
+	tx.b = d.nb(&tx, t)
 
 	return tx
 }
