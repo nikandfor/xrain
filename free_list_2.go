@@ -186,7 +186,7 @@ func (l *Freelist2) allocGrow(n int) (off int64, err error) {
 
 	for b, n := align(off, p, sz); b != 0; b, n = align(off, p, sz) {
 		//	log.Printf("back   % 16x n %x", off, n)
-		err = l.Free(n, off, l.ver)
+		err = l.Free(n, off, l.keep-1)
 		if err != nil {
 			return
 		}
@@ -201,13 +201,13 @@ func (l *Freelist2) allocGrow(n int) (off int64, err error) {
 }
 
 func (l *Freelist2) Free(n int, off, ver int64) (err error) {
-	//	log.Printf("free>: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
+	//	log.Printf("freei: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
 	//	defer func() {
-	//		log.Printf("free<: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
+	//		log.Printf("freeo: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
 	//	}()
 
 	if ver == 0 { // 0 is a special value
-		ver = 1
+		ver = -1
 	}
 
 	var buf [8]byte
@@ -290,6 +290,9 @@ func (l *Freelist2) unlock() (err error) {
 		if kv.v == 0 {
 			_, err = l.t.Del(buf[:8])
 		} else {
+			if kv.v == -1 {
+				kv.v = 0
+			}
 			binary.BigEndian.PutUint64(buf[8:], uint64(kv.v))
 			_, err = l.t.Put(buf[:8], buf[8:])
 		}

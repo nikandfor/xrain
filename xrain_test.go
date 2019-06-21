@@ -1,10 +1,12 @@
 package xrain
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"log"
 	"math/rand"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,6 +92,68 @@ func TestXRainSmoke(t *testing.T) {
 	log.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
 }
 
+func TestXRainSmokeConcurrent(t *testing.T) {
+	const Page = 0x100
+	const N = 10
+
+	b := NewMemBack(0)
+	pl := NewFixedLayout(b, Page, nil)
+	fl := NewFreelist2(b, NewTree(pl, 2*Page, Page), 4*Page, Page)
+	pl.SetFreelist(fl)
+
+	db, err := NewDB(b, &Config{
+		PageSize: Page,
+		Freelist: fl,
+		Tree:     NewTree(pl, 3*Page, Page),
+	})
+	assert.NoError(t, err)
+
+	log.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+
+	var wg sync.WaitGroup
+	wg.Add(2 * N)
+
+	for i := 0; i < N; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			err := db.Update(func(tx *Tx) error {
+				val := []byte("value_aa")
+				for j := 0; j < i; j++ {
+					val[6]++
+					val[7]++
+				}
+				return tx.Put([]byte("key_aaaa"), val)
+			})
+			assert.NoError(t, err)
+		}(i)
+	}
+
+	for i := 0; i < N; i++ {
+		go func() {
+			defer wg.Done()
+
+			err := db.View(func(tx *Tx) error {
+				v := tx.Get([]byte("key_aaaa"))
+				assert.True(t, v == nil || bytes.HasPrefix(v, []byte("value_")) && v[6] == v[7] && v[6] >= 'a' && v[6] < 'a'+N)
+				return nil
+			})
+			assert.NoError(t, err)
+		}()
+	}
+
+	wg.Wait()
+
+	l, r := b.Access2(0, 0x40, Page, 0x40)
+	log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+	b.Unlock2(l, r)
+	log.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+
+	if t.Failed() {
+		t.Logf("back base addr %p", &b.d[0])
+	}
+}
+
 func TestXRainHeavy(t *testing.T) {
 	const (
 		Page  = 0x100
@@ -113,13 +177,17 @@ func TestXRainHeavy(t *testing.T) {
 	err = ht.Run()
 	assert.NoError(t, err)
 
-	//	pl := NewFixedLayout(b, Page, nil)
-	//	b.Access2(0, 0x40, Page, 0x40, func(l, r []byte) {
-	//		log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
-	//	})
-	//	log.Printf("dump root %x (%d) free %x next %x\n%v", db.last, db.tr.Size(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
-
 	t.Logf("db size: 0x%x", b.Size())
+
+	if t.Failed() {
+		t.Logf("back base addr %p", &b.d[0])
+
+		pl := NewFixedLayout(b, Page, nil)
+		l, r := b.Access2(0, 0x40, Page, 0x40)
+		log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+		b.Unlock2(l, r)
+		log.Printf("dump ver %d root %x (%d) free %x next %x\n%v", db.ver, db.t.Root(), db.t.Size(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+	}
 }
 
 func (t *HeavyTester) Run() error {
@@ -152,14 +220,12 @@ func (t *HeavyTester) Run() error {
 		}
 
 	loop:
-		for {
-			select {
-			case res := <-r:
-				res.Intent = false
-				logs = append(logs, res)
-			default:
-				break loop
-			}
+		select {
+		case res := <-r:
+			res.Intent = false
+			logs = append(logs, res)
+			goto loop
+		default:
 		}
 
 		task.Intent = true

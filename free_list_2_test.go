@@ -117,18 +117,16 @@ func TestFreelist2AllocPow(t *testing.T) {
 	fl := NewFreelist2(b, tr, Page, Page)
 
 	pl.SetFreelist(fl)
-	fl.SetVer(1, 0)
+	fl.SetVer(1, -1)
 
 	off, err := fl.Alloc(8)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(8*Page), off, "%x != %x", 8*Page, off)
 
+	// first page is freed now, but it can't be allocated yet
+
 	next := tr.Next(nil)
 	assert.NotNil(t, next, "non-nil freelist expected")
-
-	off, err = fl.Alloc(1)
-	assert.NoError(t, err)
-	assert.Equal(t, int64(0*Page), off, "%x != %x", 0*Page, off)
 
 	off, err = fl.Alloc(2)
 	assert.NoError(t, err)
@@ -150,10 +148,14 @@ func TestFreelist2AllocPow(t *testing.T) {
 	assert.Equal(t, int64(6*Page), off, "%x != %x", 6*Page, off)
 
 	next = tr.Next(nil)
+	assert.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0}, next)
+	next = tr.Next(next)
 	assert.Nil(t, next, "nil freelist expected")
 
-	dump, psz = dumpPage(pl, tr.root)
-	log.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
+	if t.Failed() {
+		dump, psz = dumpPage(pl, tr.root)
+		log.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
+	}
 }
 
 func TestFreelist2Alloc2(t *testing.T) {
@@ -165,15 +167,13 @@ func TestFreelist2Alloc2(t *testing.T) {
 	fl := NewFreelist2(b, tr, Page, Page)
 
 	pl.SetFreelist(fl)
-	fl.SetVer(1, 0)
+	fl.SetVer(1, -1)
 
 	off, err := fl.Alloc(5)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(8*Page), off, "%x != %x", 8*Page, off)
 
-	off, err = fl.Alloc(1)
-	assert.NoError(t, err)
-	assert.Equal(t, int64(0*Page), off, "%x != %x", 0*Page, off)
+	// first page is freed now, but it can't be allocated yet
 
 	off, err = fl.Alloc(2)
 	assert.NoError(t, err)

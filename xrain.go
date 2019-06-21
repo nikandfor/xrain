@@ -111,11 +111,11 @@ func (d *DB) View(f func(tx *Tx) error) error {
 
 	defer func() {
 		d.mu.Lock()
-		d.keepl[ver]--
 		c := d.keepl[ver]
-		if c == 0 {
+		if c == 1 {
 			delete(d.keepl, ver)
-			d.updateKeep(ver)
+		} else {
+			d.keepl[ver]--
 		}
 		d.mu.Unlock()
 	}()
@@ -140,6 +140,7 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	d.wmu.Lock()
 
 	d.mu.Lock()
+	d.updateKeep()
 	ver, keep := d.ver, d.keep
 	d.mu.Unlock()
 	ver++
@@ -161,61 +162,20 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	d.mu.Lock()
 	d.ver++
 	d.tr = tr
-	d.updateKeep(0)
 	d.mu.Unlock()
 
 	return nil
 }
 
-func (d *DB) update1(f func(tx *Tx) error) error {
-	//	if atomic.CompareAndSwapInt32(&d.wcas, 0, 1) {
-	//	} else {
-	//	}
-
-	//
-
-	defer d.wmu.Unlock()
-	d.wmu.Lock()
-
-	d.mu.Lock()
-	ver, keep := d.ver, d.keep
-	d.mu.Unlock()
-	ver++
-
-	d.fl.SetVer(ver, keep)
-	d.t.SetVer(ver)
-
-	tx := newTx(d, d.t, true)
-
-	err := f(&tx)
-	if err != nil {
-		return err
-	}
-
-	//
-
-	d.writeRoot(ver)
-
-	tr := d.t.Copy()
-
-	d.mu.Lock()
-	d.ver++
-	d.tr = tr
-	d.updateKeep(0)
-	d.mu.Unlock()
-
-	return d.b.Sync()
-}
-
-func (d *DB) updateKeep(ver int64) {
+func (d *DB) updateKeep() {
 	min := d.ver
 	for k := range d.keepl {
 		if k < min {
-			if k < ver {
-				return
-			}
 			min = k
 		}
+	}
+	if min == 0 {
+		min = -1
 	}
 	d.keep = min
 }
@@ -250,6 +210,7 @@ func (d *DB) initParts0() {
 
 	if d.conf != nil && d.conf.Tree != nil {
 		d.t = d.conf.Tree
+		d.tr = d.t.Copy()
 	} else {
 		pl := NewFixedLayout(d.b, d.page, d.fl)
 		d.t = NewTree(pl, 3*d.page, d.page)
