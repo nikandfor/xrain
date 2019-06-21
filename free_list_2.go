@@ -31,6 +31,7 @@ type (
 		next, flen int64
 
 		deferred []kv2
+		defi     int
 		lock     bool
 	}
 
@@ -283,16 +284,14 @@ func (l *Freelist2) unlock() (err error) {
 
 	for i := 0; i < len(l.deferred); i++ { // for range is not applicable here
 		kv := l.deferred[i]
+		l.defi = i
 
-		//	log.Printf("op     % 16x % 16x", kv.k, kv.v)
+		//	log.Printf("op     %x %x  el %d of %x", kv.k, kv.v, i, l.deferred)
 
 		binary.BigEndian.PutUint64(buf[:8], uint64(kv.k))
 		if kv.v == 0 {
 			_, err = l.t.Del(buf[:8])
 		} else {
-			if kv.v == -1 {
-				kv.v = 0
-			}
 			binary.BigEndian.PutUint64(buf[8:], uint64(kv.v))
 			_, err = l.t.Put(buf[:8], buf[8:])
 		}
@@ -302,6 +301,7 @@ func (l *Freelist2) unlock() (err error) {
 	}
 
 	l.deferred = l.deferred[:0]
+	l.defi = -1
 	l.lock = false
 
 	err = l.shrinkFile()
@@ -360,6 +360,11 @@ func (l *Freelist2) shrinkFile() (err error) {
 }
 
 func (l *Freelist2) deferOp(k, v int64) {
+	ln := len(l.deferred) - 1
+	if ln > l.defi && l.deferred[ln].k == k && v == 0 {
+		l.deferred = l.deferred[:ln]
+		return
+	}
 	l.deferred = append(l.deferred, kv2{k, v})
 }
 
