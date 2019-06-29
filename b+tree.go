@@ -110,9 +110,7 @@ func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 
 	//	log.Printf("root %x Put %x -> %x", t.root, k, v)
 
-	last := st[len(st)-1]
-	off := last.Off(t.mask)
-	i := last.Index(t.mask)
+	off, i := st.OffIndex(t.mask)
 
 	if eq {
 		old = t.p.ValueCopy(off, i)
@@ -146,9 +144,7 @@ func (t *FileTree) Del(k []byte) (old []byte, err error) {
 		return
 	}
 
-	last := st[len(st)-1]
-	off := last.Off(t.mask)
-	i := last.Index(t.mask)
+	off, i := st.OffIndex(t.mask)
 
 	old = t.p.ValueCopy(off, i)
 
@@ -170,9 +166,7 @@ func (t *FileTree) Get(k []byte) (v []byte) {
 		return nil
 	}
 
-	last := st[len(st)-1]
-	off := last.Off(t.mask)
-	i := last.Index(t.mask)
+	off, i := st.OffIndex(t.mask)
 
 	return t.p.ValueCopy(off, i)
 }

@@ -130,12 +130,6 @@ func (d *DB) Update(f func(tx *Tx) error) error {
 }
 
 func (d *DB) update0(f func(tx *Tx) error) (err error) {
-	defer func() {
-		if err == nil && !d.nosync {
-			err = d.b.Sync()
-		}
-	}()
-
 	defer d.wmu.Unlock()
 	d.wmu.Lock()
 
@@ -163,6 +157,15 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	d.ver++
 	d.tr = tr
 	d.mu.Unlock()
+
+	if d.nosync {
+		return nil
+	}
+
+	err = d.b.Sync()
+	if err != nil {
+		return
+	}
 
 	return nil
 }
