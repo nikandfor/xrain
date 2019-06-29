@@ -19,6 +19,10 @@ type (
 		Next(k []byte) []byte
 		Prev(k []byte) []byte
 
+		Seek(it Iterator, k []byte) (_ Iterator, eq bool)
+		Step(it Iterator, back bool) Iterator
+		Out(it Iterator, l, r int64) error
+
 		Root() int64
 		SetRoot(int64)
 		SetVer(ver int64)
@@ -36,6 +40,8 @@ type (
 		size  int
 		depth int
 	}
+
+	Iterator []keylink
 
 	keylink int64
 )
@@ -103,7 +109,7 @@ func (t *FileTree) PageLayout() PageLayout { return t.p }
 func (t *FileTree) Copy() Tree { cp := *t; return &cp }
 
 func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
-	st, eq := t.seek(nil, k)
+	st, eq := t.Seek(nil, k)
 
 	//	log.Printf("root %x Put %x -> %x", t.root, k, v)
 
@@ -129,13 +135,13 @@ func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 		t.size++
 	}
 
-	err = t.out(st, l, r)
+	err = t.Out(st, l, r)
 
 	return
 }
 
 func (t *FileTree) Del(k []byte) (old []byte, err error) {
-	st, eq := t.seek(nil, k)
+	st, eq := t.Seek(nil, k)
 
 	//	log.Printf("root %x Del %x", t.root, k)
 
@@ -156,12 +162,12 @@ func (t *FileTree) Del(k []byte) (old []byte, err error) {
 
 	t.size--
 
-	err = t.out(st, l, NilPage)
+	err = t.Out(st, l, NilPage)
 	return
 }
 
 func (t *FileTree) Get(k []byte) (v []byte) {
-	st, eq := t.seek(nil, k)
+	st, eq := t.Seek(nil, k)
 
 	if !eq {
 		return nil
@@ -204,7 +210,7 @@ func (t *FileTree) Prev(k []byte) []byte {
 	return t.p.Key(off, i)
 }
 
-func (t *FileTree) seek(st []keylink, k []byte) (_ []keylink, eq bool) {
+func (t *FileTree) Seek(st Iterator, k []byte) (_ Iterator, eq bool) {
 	off := t.root
 	var i, d int
 	for {
@@ -301,7 +307,7 @@ func (t *FileTree) step(st []keylink, k []byte, back bool) (_ []keylink) {
 	return st
 }
 
-func (t *FileTree) out(s []keylink, l, r int64) (err error) {
+func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
 	mask := t.mask
 	d := len(s)
 	for d -= 2; d >= 0; d-- {
@@ -432,10 +438,81 @@ func (t *FileTree) out(s []keylink, l, r int64) (err error) {
 	return nil
 }
 
+func (t *FileTree) Step(st Iterator, back bool) Iterator {
+	var off int64
+	var i int
+
+	if st == nil {
+		p := t.root
+		for {
+			if back {
+				i = t.p.NKeys(p) - 1
+			} else {
+				i = 0
+			}
+			st = append(st, keylink(p)|keylink(i))
+
+			if t.p.IsLeaf(p) {
+				return st
+			}
+
+			p = t.p.Int64(p, i)
+		}
+	}
+	if len(st) == 0 {
+		return nil
+	}
+
+	l := len(st) - 1
+
+	last := st[l]
+	off = last.Off(t.mask)
+	i = last.Index(t.mask)
+
+	if back {
+		if i > 0 {
+			i--
+			st[l] = keylink(off) | keylink(i)
+			return st
+		}
+	} else {
+		n := t.p.NKeys(off)
+		if i+1 < n {
+			i++
+			st[l] = keylink(off) | keylink(i)
+			return st
+		}
+	}
+
+	sub := t.Step(st[:l], back)
+	if sub == nil {
+		return nil
+	}
+
+	poff, pi := sub.OffIndex(t.mask)
+
+	off = t.p.Int64(poff, pi)
+
+	if back {
+		i = t.p.NKeys(off) - 1
+	} else {
+		i = 0
+	}
+
+	st[l] = keylink(off) | keylink(i)
+
+	return st
+}
+
 func (l keylink) Off(mask int64) int64 {
 	return int64(l) &^ mask
 }
 
 func (l keylink) Index(mask int64) int {
 	return int(int64(l) & mask)
+}
+
+func (it Iterator) OffIndex(m int64) (int64, int) {
+	last := it[len(it)-1]
+	return last.Off(m), last.Index(m)
 }

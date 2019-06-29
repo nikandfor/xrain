@@ -504,6 +504,12 @@ func (l *FixedLayout) insertPage(p []byte, i, n int, f func(k, v []byte)) {
 }
 
 func (l *FixedLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err error) {
+	if len(k) != l.k {
+		panic(len(k))
+	}
+	if len(v) != l.v {
+		panic(len(v))
+	}
 	return l.Insert(off, i, 0, 0, func(km, vm []byte) {
 		copy(km, k)
 		copy(vm, v)
