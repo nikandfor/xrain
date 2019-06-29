@@ -110,6 +110,7 @@ func TestFreelist2AllowGrow2(t *testing.T) {
 
 func TestFreelist2AllocPow(t *testing.T) {
 	const Page = 0x80
+	const Mask = Page - 1
 
 	b := NewMemBack(1 * Page)
 	pl := NewFixedLayout(b, Page, nil)
@@ -125,8 +126,8 @@ func TestFreelist2AllocPow(t *testing.T) {
 
 	// first page is freed now, but it can't be allocated yet
 
-	next := tr.Next(nil)
-	assert.NotNil(t, next, "non-nil freelist expected")
+	it := tr.Step(nil, false)
+	assert.NotNil(t, it, "non-nil freelist expected")
 
 	off, err = fl.Alloc(2)
 	assert.NoError(t, err)
@@ -147,10 +148,14 @@ func TestFreelist2AllocPow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(6*Page), off, "%x != %x", 6*Page, off)
 
-	next = tr.Next(nil)
+	it = tr.Step(nil, false)
+	if !assert.NotNil(t, it, "nil freelist expected") {
+		return
+	}
+	next := pl.Key(it.OffIndex(Mask))
 	assert.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0}, next)
-	next = tr.Next(next)
-	assert.Nil(t, next, "nil freelist expected")
+	it = tr.Step(it, false)
+	assert.Nil(t, it, "nil freelist expected")
 
 	if t.Failed() {
 		dump, psz = dumpPage(pl, tr.root)
@@ -253,7 +258,9 @@ func TestFreelist2Auto(t *testing.T) {
 		}
 		walk(tr.root)
 
-		for k := tr.Next(nil); k != nil; k = tr.Next(k) {
+		for it := tr.Step(nil, false); it != nil; it = tr.Step(it, false) {
+			k := pl.Key(it.OffIndex(fl.mask))
+
 			off := int64(binary.BigEndian.Uint64(k))
 			size := uint(off & fl.mask)
 

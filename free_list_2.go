@@ -22,8 +22,9 @@ type (
 	}
 
 	Freelist2 struct {
-		b Back
-		t Tree // off|size -> ver; size ::= log(n)
+		b  Back
+		t  Tree // off|size -> ver; size ::= log(n)
+		pl PageLayout
 
 		page, mask int64
 		ver, keep  int64
@@ -55,6 +56,7 @@ func NewFreelist2(b Back, t Tree, next, page int64) *Freelist2 {
 	return &Freelist2{
 		b:    b,
 		t:    t,
+		pl:   t.PageLayout(),
 		page: page,
 		mask: page - 1,
 		next: next,
@@ -121,12 +123,13 @@ func (l *Freelist2) Alloc(n int) (off int64, err error) {
 		}
 	}
 
-	var last []byte
+	var it Iterator
 next:
-	last = l.t.Next(last)
-	if last == nil {
+	it = l.t.Step(it, false)
+	if it == nil {
 		return l.allocGrow(n)
 	}
+	last := l.pl.Key(it.OffIndex(l.mask))
 
 	off = int64(binary.BigEndian.Uint64(last))
 
@@ -313,10 +316,11 @@ func (l *Freelist2) shrinkFile() (err error) {
 	fend := l.next
 
 	for {
-		last := l.t.Prev(nil)
-		if last == nil {
+		it := l.t.Step(nil, true)
+		if it == nil {
 			break
 		}
+		last := l.pl.Key(it.OffIndex(l.mask))
 
 		bst := int64(binary.BigEndian.Uint64(last))
 		bend := bst&^l.mask + l.page<<uint(bst&l.mask)

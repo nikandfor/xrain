@@ -16,9 +16,6 @@ type (
 		Put(k, v []byte) (old []byte, err error)
 		Del(k []byte) (old []byte, err error)
 
-		Next(k []byte) []byte
-		Prev(k []byte) []byte
-
 		Seek(it Iterator, k []byte) (_ Iterator, eq bool)
 		Step(it Iterator, back bool) Iterator
 		Out(it Iterator, l, r int64) error
@@ -180,37 +177,9 @@ func (t *FileTree) Get(k []byte) (v []byte) {
 	return t.p.ValueCopy(off, i)
 }
 
-func (t *FileTree) Next(k []byte) []byte {
-	st := t.step(nil, k, false)
-	if st == nil {
-		return nil
-	}
-
-	last := st[len(st)-1]
-	off := last.Off(t.mask)
-	i := last.Index(t.mask)
-
-	next := t.p.Key(off, i)
-
-	//	log.Printf("root %x Nxt %x -> %x", t.root, k, next)
-
-	return next
-}
-
-func (t *FileTree) Prev(k []byte) []byte {
-	st := t.step(nil, k, true)
-	if st == nil {
-		return nil
-	}
-
-	last := st[len(st)-1]
-	off := last.Off(t.mask)
-	i := last.Index(t.mask)
-
-	return t.p.Key(off, i)
-}
-
 func (t *FileTree) Seek(st Iterator, k []byte) (_ Iterator, eq bool) {
+	st = st[:0]
+
 	off := t.root
 	var i, d int
 	for {
@@ -235,76 +204,6 @@ func (t *FileTree) Seek(st Iterator, k []byte) (_ Iterator, eq bool) {
 	}
 	//	log.Printf("seek      %q -> %x %v", k, st, eq)
 	return st, eq
-}
-
-func (t *FileTree) step(st []keylink, k []byte, back bool) (_ []keylink) {
-	off := t.root
-	mask := t.mask
-	var i, d int
-	var eq, up bool
-	for {
-		if up {
-			if d == 0 {
-				st = nil
-				break
-			}
-			d--
-
-			last := st[d]
-			off = last.Off(mask)
-			i = last.Index(mask)
-			if back {
-				if i == 0 {
-					continue
-				}
-				i--
-			} else {
-				i++
-				if i == t.p.NKeys(off) {
-					continue
-				}
-			}
-
-			up = false
-			st[d] = keylink(off) | keylink(i)
-			st = st[:d+1]
-		} else {
-			st = append(st, keylink(off))
-			n := t.p.NKeys(off)
-
-			if back && k == nil {
-				i, eq = n, false
-			} else {
-				i, eq = t.p.Search(off, k)
-			}
-			//	log.Printf("search %4x %q -> %d/%d %v", off, k, i, n, eq)
-
-			if t.p.IsLeaf(off) {
-				if back {
-					i--
-				} else if eq {
-					i++
-				}
-				if i < 0 || i >= n {
-					up = true
-					continue
-				}
-				st[d] |= keylink(i)
-				break
-			}
-
-			if n == i {
-				i--
-			}
-
-			st[d] |= keylink(i)
-		}
-
-		d++
-		off = t.p.Int64(off, i)
-	}
-	//	log.Printf("step   %q -> %x", k, st)
-	return st
 }
 
 func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
@@ -442,11 +341,16 @@ func (t *FileTree) Step(st Iterator, back bool) Iterator {
 	var off int64
 	var i int
 
-	if st == nil {
+	if len(st) == 0 {
 		p := t.root
 		for {
+			n := t.p.NKeys(p)
+			if n == 0 {
+				return nil
+			}
+
 			if back {
-				i = t.p.NKeys(p) - 1
+				i = n - 1
 			} else {
 				i = 0
 			}
@@ -458,9 +362,6 @@ func (t *FileTree) Step(st Iterator, back bool) Iterator {
 
 			p = t.p.Int64(p, i)
 		}
-	}
-	if len(st) == 0 {
-		return nil
 	}
 
 	l := len(st) - 1
@@ -484,12 +385,16 @@ func (t *FileTree) Step(st Iterator, back bool) Iterator {
 		}
 	}
 
-	sub := t.Step(st[:l], back)
-	if sub == nil {
+	if l == 0 {
 		return nil
 	}
 
-	poff, pi := sub.OffIndex(t.mask)
+	par := t.Step(st[:l], back)
+	if par == nil {
+		return nil
+	}
+
+	poff, pi := par.OffIndex(t.mask)
 
 	off = t.p.Int64(poff, pi)
 

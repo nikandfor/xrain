@@ -31,7 +31,9 @@ type (
 		name string
 		par  *SimpleBucket
 		t    Tree
+		pl   PageLayout
 		root int64
+		mask int64
 		sub  map[string]*SimpleBucket
 		del  bool
 	}
@@ -51,7 +53,9 @@ func newBucket(tx *Tx, t Tree) Bucket {
 	return &SimpleBucket{
 		tx:   tx,
 		t:    t,
+		pl:   t.PageLayout(),
 		root: t.Root(),
+		mask: tx.d.page - 1,
 	}
 }
 
@@ -94,7 +98,12 @@ func (b *SimpleBucket) Next(k []byte) []byte {
 		panic("not allowed")
 	}
 
-	return b.t.Next(k)
+	it, eq := b.t.Seek(nil, k)
+	if eq {
+		it = b.t.Step(it, false)
+	}
+
+	return b.pl.Key(it.OffIndex(b.mask))
 }
 
 func (b *SimpleBucket) Prev(k []byte) []byte {
@@ -102,7 +111,10 @@ func (b *SimpleBucket) Prev(k []byte) []byte {
 		panic("not allowed")
 	}
 
-	return b.t.Prev(k)
+	it, _ := b.t.Seek(nil, k)
+	it = b.t.Step(it, true)
+
+	return b.pl.Key(it.OffIndex(b.mask))
 }
 
 func (b *SimpleBucket) Bucket(k []byte) Bucket {

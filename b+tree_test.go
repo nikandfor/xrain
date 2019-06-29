@@ -51,53 +51,6 @@ func TestTreeSmall(t *testing.T) {
 	assert.EqualValues(t, 0, tr.depth)
 }
 
-func TestTreeNext(t *testing.T) {
-	const (
-		Page  = 0x80
-		N     = 20
-		Prime = 101
-	)
-
-	b := NewMemBack(Page)
-	fl := NewEverGrowFreelist(b, Page, 0)
-	pl := NewFixedLayout(b, Page, fl)
-	tr := NewTree(pl, 0, Page)
-
-	for i := 0; i < N; i++ {
-		q := ((i + 1) * Prime) % N
-		k := fmt.Sprintf("key_%04x", q)
-		v := fmt.Sprintf("value_%02x", q)
-		_, err := tr.Put([]byte(k), []byte(v))
-		assert.NoError(t, err)
-	}
-
-	q := 0
-	for k := tr.Next(nil); k != nil; k = tr.Next(k) {
-		ek := fmt.Sprintf("key_%04x", q)
-		ev := fmt.Sprintf("value_%02x", q)
-		v := tr.Get(k)
-
-		assert.EqualValues(t, ek, k)
-		assert.EqualValues(t, ev, v)
-
-		q++
-	}
-	assert.Equal(t, N, q)
-
-	q = N
-	for k := tr.Prev(nil); k != nil; k = tr.Prev(k) {
-		q--
-
-		ek := fmt.Sprintf("key_%04x", q)
-		ev := fmt.Sprintf("value_%02x", q)
-		v := tr.Get(k)
-
-		assert.EqualValues(t, ek, k)
-		assert.EqualValues(t, ev, v)
-	}
-	assert.Equal(t, 0, q)
-}
-
 func TestTreeIterator(t *testing.T) {
 	const (
 		Page  = 0x80
@@ -109,6 +62,9 @@ func TestTreeIterator(t *testing.T) {
 	fl := NewEverGrowFreelist(b, Page, 0)
 	pl := NewFixedLayout(b, Page, fl)
 	tr := NewTree(pl, 0, Page)
+
+	assert.Nil(t, tr.Step(nil, true))
+	assert.Nil(t, tr.Step(nil, false))
 
 	for i := 0; i < N; i++ {
 		q := ((i + 1) * Prime) % N
@@ -183,9 +139,12 @@ func TestTreeBig(t *testing.T) {
 	}
 
 	q := 0
-	for k := tr.Next(nil); k != nil; k = tr.Next(k) {
+	for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
+		off, i := st.OffIndex(0x7f)
+
 		ek := fmt.Sprintf("key_%04x", q)
 		ev := fmt.Sprintf("value_%02x", q)
+		k := pl.Key(off, i)
 		v := tr.Get(k)
 
 		assert.EqualValues(t, ek, k)
@@ -196,11 +155,13 @@ func TestTreeBig(t *testing.T) {
 	assert.Equal(t, N, q)
 
 	q = N
-	for k := tr.Prev(nil); k != nil; k = tr.Prev(k) {
+	for st := tr.Step(nil, true); st != nil; st = tr.Step(st, true) {
+		off, i := st.OffIndex(0x7f)
 		q--
 
 		ek := fmt.Sprintf("key_%04x", q)
 		ev := fmt.Sprintf("value_%02x", q)
+		k := pl.Key(off, i)
 		v := tr.Get(k)
 
 		assert.EqualValues(t, ek, k)
@@ -237,8 +198,12 @@ func TestTreeBig(t *testing.T) {
 		}
 	}
 
-	for k := tr.Next(nil); k != nil; k = tr.Next(k) {
+	for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
+		off, i := st.OffIndex(0x7f)
+
+		k := pl.Key(off, i)
 		_, err := tr.Del(k)
+
 		assert.NoError(t, err)
 	}
 }
@@ -281,16 +246,6 @@ func buildBenchBigTree(b *testing.B) Tree {
 	//	tlog.Printf("tree root %x size %d depth %d", tr.Root(), tr.Size(), tr.depth)
 
 	return tr
-}
-
-func BenchmarkTreeNext(b *testing.B) {
-	tr := buildBenchBigTree(b)
-
-	for j := 0; j < b.N; j++ {
-		for k := tr.Next(nil); k != nil; k = tr.Next(k) {
-			_ = tr.Get(k)
-		}
-	}
 }
 
 func BenchmarkTreeIterator(b *testing.B) {
