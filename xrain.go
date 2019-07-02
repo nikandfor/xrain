@@ -41,6 +41,7 @@ type (
 		b     Back
 		fl    Freelist
 		t, tr Tree
+		batch *Batcher
 
 		nb     NewBucketFunc
 		nosync bool
@@ -54,10 +55,7 @@ type (
 		keep  int64
 		keepl map[int64]int
 
-		wcas int32
-
-		wmu  sync.Mutex
-		rwmu sync.RWMutex
+		wmu sync.Mutex
 	}
 
 	Config struct {
@@ -99,6 +97,9 @@ func NewDB(b Back, c *Config) (*DB, error) {
 		return nil, err
 	}
 
+	d.batch = NewBatcher(&d.wmu, b.Sync)
+	go d.batch.Run()
+
 	return d, nil
 }
 
@@ -126,7 +127,7 @@ func (d *DB) View(f func(tx *Tx) error) error {
 }
 
 func (d *DB) Update(f func(tx *Tx) error) error {
-	return d.update0(f)
+	return d.update1(f)
 }
 
 func (d *DB) update0(f func(tx *Tx) error) (err error) {
@@ -166,6 +167,43 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	if err != nil {
 		return
 	}
+
+	return nil
+}
+
+func (d *DB) update1(f func(tx *Tx) error) (err error) {
+	defer d.batch.Unlock()
+	batch := d.batch.Lock()
+
+	d.mu.Lock()
+	d.updateKeep()
+	ver, keep := d.ver, d.keep
+	d.mu.Unlock()
+	ver++
+
+	d.fl.SetVer(ver, keep)
+	d.t.SetVer(ver)
+
+	tx := newTx(d, d.t, true)
+
+	err = f(&tx)
+	if err != nil {
+		return err
+	}
+
+	d.writeRoot(ver)
+
+	err = d.batch.Wait(batch)
+	if err != nil {
+		return err
+	}
+
+	tr := d.t.Copy()
+
+	d.mu.Lock()
+	d.ver++
+	d.tr = tr
+	d.mu.Unlock()
 
 	return nil
 }
