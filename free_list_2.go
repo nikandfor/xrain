@@ -92,9 +92,9 @@ func (l *Freelist2) Serialize(p []byte) int {
 }
 
 func (l *Freelist2) Alloc(n int) (off int64, err error) {
-	//	log.Printf("alloc: %2x       ver %d/%d next %x def %x", n, l.ver, l.keep, l.next, l.deferred)
+	//	tlog.Printf("alloc: %2x       ver %d/%d next %x def %x", n, l.ver, l.keep, l.next, l.deferred)
 	//	defer func() {
-	//		log.Printf("alloc: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
+	//		tlog.Printf("alloc: %2x %4x  ver %d/%d next %x def %x", n, off, l.ver, l.keep, l.next, l.deferred)
 	//	}()
 
 	nsize := nsize(n)
@@ -255,7 +255,7 @@ more:
 
 		sz++
 		off &= sib
-		if v < ver {
+		if v > ver {
 			ver = v
 		}
 
@@ -315,6 +315,8 @@ func (l *Freelist2) unlock() (err error) {
 func (l *Freelist2) shrinkFile() (err error) {
 	fend := l.next
 
+	//	tlog.Printf("try to shrinkFile %d/%d %x\n%v", l.ver, l.keep, fend, dumpFile(l.pl))
+
 	for {
 		it := l.t.Step(nil, true)
 		if it == nil {
@@ -325,7 +327,7 @@ func (l *Freelist2) shrinkFile() (err error) {
 		bst := int64(binary.BigEndian.Uint64(last))
 		bend := bst&^l.mask + l.page<<uint(bst&l.mask)
 
-		//	log.Printf("check last block %x (%x) of %x", bst, bend, fend)
+		//	tlog.Printf("check last block %x - %x of %x", bst, bend, fend)
 
 		if bend != fend {
 			break

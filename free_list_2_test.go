@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/nikandfor/tlog"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -233,7 +234,7 @@ func TestFreelist2Auto(t *testing.T) {
 		walk = func(r int64) {
 			p := b.Access(r, 0x10)
 			{
-				ext := pl.extended(p)
+				ext := pl.nsize(p)
 				tree += 1 << nsize(ext)
 
 				i := 0
@@ -359,4 +360,70 @@ func TestFreelist2Auto(t *testing.T) {
 	}
 
 	check(prOnce && !prEach)
+}
+
+func TestFreelistShrinkFile(t *testing.T) {
+	const Page = 0x100
+
+	b := NewMemBack(1 * Page)
+	pl := NewFixedLayout(b, Page, nil)
+	tr := NewTree(pl, 0, Page)
+	fl := NewFreelist2(b, tr, Page, Page)
+
+	pl.SetFreelist(fl)
+
+	fl.SetVer(1, -1)
+	off1, err := fl.Alloc(1)
+	assert.NoError(t, err)
+
+	fl.SetVer(2, 1)
+	off2, err := fl.Alloc(2)
+	assert.NoError(t, err)
+
+	fl.SetVer(3, 1)
+	off3, err := fl.Alloc(1)
+	assert.NoError(t, err)
+
+	fl.SetVer(4, 2)
+	off4, err := fl.Alloc(4)
+	assert.NoError(t, err)
+
+	fl.SetVer(5, 1)
+	fl.Free(1, off1, 1)
+
+	fl.SetVer(6, 5)
+	fl.Free(2, off2, 2)
+
+	fl.SetVer(7, 5)
+	fl.Free(1, off3, 3)
+
+	next := fl.next
+
+	fl.SetVer(8, 6)
+	fl.Free(3, off4, 4)
+
+	if fl.next >= next {
+		t.Errorf("file didn't shrink")
+		return
+	}
+
+	pver := func(off int64) (ver, size int64) {
+		p := b.Access(off, 0x10)
+		ver = pl.getver(p)
+		size = int64(pl.nsize(p)) * Page
+		b.Unlock(p)
+		return
+	}
+
+	for off := fl.next; off <= next; {
+		v, s := pver(off)
+		if v >= fl.keep {
+			t.Errorf("page %x with ver %d freed while keep == %d", off, v, fl.keep)
+		}
+		off += s
+	}
+
+	tlog.Printf("next %x, pages %x %x %x %x", fl.next, off1, off2, off3, off4)
+
+	//	tlog.Printf("file: %x\n%v", fl.next, dumpFile(pl))
 }

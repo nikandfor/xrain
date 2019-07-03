@@ -113,7 +113,7 @@ func (l *BaseLayout) Free(off int64, r bool) error {
 
 	p := l.b.Access(off, 0x10)
 	ver := l.getver(p)
-	n := l.extended(p)
+	n := l.nsize(p)
 	l.b.Unlock(p)
 
 	return l.free.Free(n, off, ver)
@@ -163,7 +163,7 @@ func (l *BaseLayout) nkeys(p []byte) int {
 	return int(p[4])&^0x80<<8 | int(p[5])
 }
 
-func (l *BaseLayout) extended(p []byte) int {
+func (l *BaseLayout) nsize(p []byte) int {
 	return (int(p[6])<<8 | int(p[7])) + 1
 }
 
