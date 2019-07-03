@@ -42,7 +42,7 @@ type (
 		SetFreelist(fl Freelist)
 	}
 
-	BaseLayout struct { // crc32 uint32, isbranch bit, size uint15, extended uint16, ver int64
+	BaseLayout struct { // crc32 uint32, isbranch bit, size uint15, overflow uint16, ver int64
 		b    Back
 		page int64
 		ver  int64
@@ -113,7 +113,7 @@ func (l *BaseLayout) Free(off int64, r bool) error {
 
 	p := l.b.Access(off, 0x10)
 	ver := l.getver(p)
-	n := l.nsize(p)
+	n := l.overflow(p)
 	l.b.Unlock(p)
 
 	return l.free.Free(n, off, ver)
@@ -163,7 +163,7 @@ func (l *BaseLayout) nkeys(p []byte) int {
 	return int(p[4])&^0x80<<8 | int(p[5])
 }
 
-func (l *BaseLayout) nsize(p []byte) int {
+func (l *BaseLayout) overflow(p []byte) int {
 	return (int(p[6])<<8 | int(p[7])) + 1
 }
 
@@ -172,7 +172,7 @@ func (l *BaseLayout) setsize(p []byte, n int) {
 	p[5] = byte(n)
 }
 
-func (l *BaseLayout) setextended(p []byte, n int) {
+func (l *BaseLayout) setoverflow(p []byte, n int) {
 	n--
 	p[6] = byte(n >> 8)
 	p[7] = byte(n)
@@ -259,7 +259,7 @@ func (l *FixedLayout) Free(off int64, r bool) (err error) {
 
 func (l *FixedLayout) setheader(p []byte) {
 	l.setver(p, l.ver)
-	l.setextended(p, l.pm)
+	l.setoverflow(p, l.pm)
 }
 
 func (l *FixedLayout) Alloc(leaf bool) (int64, error) {

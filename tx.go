@@ -13,13 +13,22 @@ type (
 		writable bool
 	}
 
+	Cursor interface {
+		First() []byte
+		Last() []byte
+		Next() []byte
+		Prev() []byte
+		Seek(k []byte) (_ []byte, eq bool)
+
+		Value() []byte
+	}
+
 	Bucket interface {
 		Get(k []byte) []byte
 		Put(k, v []byte) error
 		Del(k []byte) error
 
-		Next(k []byte) []byte
-		Prev(k []byte) []byte
+		Cursor() Cursor
 
 		Bucket(k []byte) Bucket
 		PutBucket(k []byte) (Bucket, error)
@@ -91,30 +100,6 @@ func (b *SimpleBucket) Del(k []byte) error {
 	}
 
 	return b.propagate()
-}
-
-func (b *SimpleBucket) Next(k []byte) []byte {
-	if !b.allowed(false) {
-		panic("not allowed")
-	}
-
-	it, eq := b.t.Seek(nil, k)
-	if eq {
-		it = b.t.Step(it, false)
-	}
-
-	return b.pl.Key(it.OffIndex(b.mask))
-}
-
-func (b *SimpleBucket) Prev(k []byte) []byte {
-	if !b.allowed(false) {
-		panic("not allowed")
-	}
-
-	it, _ := b.t.Seek(nil, k)
-	it = b.t.Step(it, true)
-
-	return b.pl.Key(it.OffIndex(b.mask))
 }
 
 func (b *SimpleBucket) Bucket(k []byte) Bucket {
@@ -243,6 +228,8 @@ func (b *SimpleBucket) DelBucket(k []byte) error {
 
 	return nil
 }
+
+func (b *SimpleBucket) Cursor() Cursor { return nil }
 
 func (b *SimpleBucket) propagate() error {
 	root := b.t.Root()

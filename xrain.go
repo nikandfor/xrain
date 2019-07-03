@@ -221,9 +221,6 @@ func (d *DB) updateKeep() {
 			min = k
 		}
 	}
-	if min == 0 {
-		min = -1
-	}
 	d.keep = min
 }
 
@@ -446,7 +443,7 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 			tp = 'D'
 		}
 		ver := base.getver(p)
-		size = base.nsize(p)
+		size = base.overflow(p)
 		n := l.NKeys(off)
 		fmt.Fprintf(&buf, "%4x: %c ext %2d ver %3d  nkeys %4d  ", off, tp, size-1, ver, n)
 		if kvl != nil {

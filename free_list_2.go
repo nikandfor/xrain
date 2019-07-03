@@ -272,6 +272,9 @@ fin:
 }
 
 func (l *Freelist2) SetVer(ver, keep int64) {
+	if keep == 0 {
+		keep = -1
+	}
 	l.ver, l.keep = ver, keep
 	l.t.SetVer(l.ver)
 }

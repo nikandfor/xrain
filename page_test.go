@@ -41,7 +41,7 @@ func TestPageFixedAllocRoot(t *testing.T) {
 	p := b.Access(off, 0x10)
 	assert.Equal(t, 0, pl.nkeys(p))
 	assert.Equal(t, int64(3), pl.getver(p))
-	assert.Equal(t, 2, pl.nsize(p))
+	assert.Equal(t, 2, pl.overflow(p))
 	b.Unlock(p)
 }
 
