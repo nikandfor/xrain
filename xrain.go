@@ -142,7 +142,7 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	ver++
 
 	d.fl.SetVer(ver, keep)
-	d.t.SetVer(ver)
+	d.t.PageLayout().SetVer(ver)
 
 	tx := newTx(d, d.t, true)
 
@@ -183,7 +183,7 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	d.mu.Unlock()
 
 	d.fl.SetVer(ver, keep)
-	d.t.SetVer(ver)
+	d.t.PageLayout().SetVer(ver)
 
 	tx := newTx(d, d.t, true)
 
@@ -379,7 +379,7 @@ func checkPage(l PageLayout, off int64) {
 	n := l.NKeys(off)
 	var prev []byte
 	for i := 0; i < n; i++ {
-		k := l.Key(off, i)
+		k := l.Key(off, i, nil)
 		if bytes.Compare(prev, k) != -1 {
 			log.Fatalf("at page %x of size %d  %2x goes before %2x", off, n, prev, k)
 		}
@@ -453,20 +453,20 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 		}
 		if fl != nil {
 			for i := 0; i < n; i++ {
-				k := l.Key(off, i)
+				k := l.Key(off, i, nil)
 				v := l.Int64(off, i)
 				fmt.Fprintf(&buf, "    %2x -> %4x\n", k, v)
 			}
 		} else {
 			if l.IsLeaf(off) {
 				for i := 0; i < n; i++ {
-					k := l.Key(off, i)
-					v := l.ValueCopy(off, i)
+					k := l.Key(off, i, nil)
+					v := l.Value(off, i, nil)
 					fmt.Fprintf(&buf, "    %q -> %q\n", k, v)
 				}
 			} else {
 				for i := 0; i < n; i++ {
-					k := l.Key(off, i)
+					k := l.Key(off, i, nil)
 					v := l.Int64(off, i)
 					fmt.Fprintf(&buf, "    %4x <- % 2x (%q)\n", v, k, k)
 				}

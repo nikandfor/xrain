@@ -16,13 +16,12 @@ type (
 		Put(k, v []byte) (old []byte, err error)
 		Del(k []byte) (old []byte, err error)
 
-		Seek(it Iterator, k []byte) (_ Iterator, eq bool)
-		Step(it Iterator, back bool) Iterator
-		Out(it Iterator, l, r int64) error
+		Seek(st Stack, k []byte) (_ Stack, eq bool)
+		Step(st Stack, back bool) Stack
+		Out(st Stack, l, r int64) error
 
 		Root() int64
 		SetRoot(int64)
-		SetVer(ver int64)
 
 		PageLayout() PageLayout
 		Copy() Tree
@@ -38,7 +37,7 @@ type (
 		depth int
 	}
 
-	Iterator []keylink
+	Stack []keylink
 
 	keylink int64
 )
@@ -91,8 +90,6 @@ func (t *FileTree) Serialize(p []byte) int {
 	return s
 }
 
-func (t *FileTree) SetVer(ver int64) { t.p.SetVer(ver) }
-
 func (t *FileTree) Size() int {
 	return t.size
 }
@@ -113,15 +110,15 @@ func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 	off, i := st.OffIndex(t.mask)
 
 	if eq {
-		old = t.p.ValueCopy(off, i)
+		old = t.p.Value(off, i, nil)
 
-		off, err = t.p.Del(off, i)
+		off, err = t.p.Delete(off, i)
 		if err != nil {
 			return
 		}
 	}
 
-	l, r, err := t.p.Put(off, i, k, v)
+	l, r, err := t.p.Insert(off, i, k, v)
 	if err != nil {
 		return
 	}
@@ -146,9 +143,9 @@ func (t *FileTree) Del(k []byte) (old []byte, err error) {
 
 	off, i := st.OffIndex(t.mask)
 
-	old = t.p.ValueCopy(off, i)
+	old = t.p.Value(off, i, nil)
 
-	l, err := t.p.Del(off, i)
+	l, err := t.p.Delete(off, i)
 	if err != nil {
 		return
 	}
@@ -168,10 +165,10 @@ func (t *FileTree) Get(k []byte) (v []byte) {
 
 	off, i := st.OffIndex(t.mask)
 
-	return t.p.ValueCopy(off, i)
+	return t.p.Value(off, i, nil)
 }
 
-func (t *FileTree) Seek(st Iterator, k []byte) (_ Iterator, eq bool) {
+func (t *FileTree) Seek(st Stack, k []byte) (_ Stack, eq bool) {
 	st = st[:0]
 
 	off := t.root
@@ -200,7 +197,7 @@ func (t *FileTree) Seek(st Iterator, k []byte) (_ Iterator, eq bool) {
 	return st, eq
 }
 
-func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
+func (t *FileTree) Out(s Stack, l, r int64) (err error) {
 	mask := t.mask
 	d := len(s)
 	for d -= 2; d >= 0; d-- {
@@ -226,13 +223,13 @@ func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
 		//	log.Printf("stage0 d %d off %3x i %d lr %3x %3x\n%v", d, off, i, l, r, dumpFile(t.p))
 
 		// delete old link
-		off, err = t.p.Del(off, i)
+		off, err = t.p.Delete(off, i)
 		if err != nil {
 			return err
 		}
 
 		if rdel {
-			off, err = t.p.Del(off, i)
+			off, err = t.p.Delete(off, i)
 			if err != nil {
 				return err
 			}
@@ -241,8 +238,8 @@ func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
 		//	log.Printf("stage1 d %d off %3x i %d lr %3x %3x\n%v", d, off, i, l, r, dumpFile(t.p))
 
 		// put left new child
-		lk := t.p.LastKey(l)
-		pl, pr, err := t.p.PutInt64(off, i, lk, l)
+		lk := t.p.LastKey(l, nil)
+		pl, pr, err := t.p.InsertInt64(off, i, lk, l)
 		if err != nil {
 			return err
 		}
@@ -256,10 +253,10 @@ func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
 		//	log.Printf("stage2 d %d par %3x %3x i %d lr %3x %3x", d, pl, pr, i, l, r)
 		//	log.Printf("page now\n%v", dumpPage(t.p, off))
 
-		rk := t.p.LastKey(r)
+		rk := t.p.LastKey(r, nil)
 		// we didn't split parent page yet
 		if pr == NilPage {
-			pl, pr, err = t.p.PutInt64(pl, i+1, rk, r)
+			pl, pr, err = t.p.InsertInt64(pl, i+1, rk, r)
 			if err != nil {
 				return err
 			}
@@ -273,9 +270,9 @@ func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
 		var p2 int64
 		// at which page our index are?
 		if m := t.p.NKeys(pl); i < m {
-			pl, p2, err = t.p.PutInt64(pl, i, rk, r)
+			pl, p2, err = t.p.InsertInt64(pl, i, rk, r)
 		} else {
-			pr, p2, err = t.p.PutInt64(pr, i-m, rk, r)
+			pr, p2, err = t.p.InsertInt64(pr, i-m, rk, r)
 		}
 		if err != nil {
 			return err
@@ -303,14 +300,14 @@ func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
 			return err
 		}
 
-		lk := t.p.LastKey(l)
-		rk := t.p.LastKey(r)
+		lk := t.p.LastKey(l, nil)
+		rk := t.p.LastKey(r, nil)
 
-		off, _, err = t.p.PutInt64(off, 0, lk, l)
+		off, _, err = t.p.InsertInt64(off, 0, lk, l)
 		if err != nil {
 			return err
 		}
-		off, _, err = t.p.PutInt64(off, 1, rk, r)
+		off, _, err = t.p.InsertInt64(off, 1, rk, r)
 		if err != nil {
 			return err
 		}
@@ -331,7 +328,7 @@ func (t *FileTree) Out(s Iterator, l, r int64) (err error) {
 	return nil
 }
 
-func (t *FileTree) Step(st Iterator, back bool) Iterator {
+func (t *FileTree) Step(st Stack, back bool) Stack {
 	var off int64
 	var i int
 
@@ -411,7 +408,7 @@ func (l keylink) Index(mask int64) int {
 	return int(int64(l) & mask)
 }
 
-func (it Iterator) OffIndex(m int64) (int64, int) {
-	last := it[len(it)-1]
+func (st Stack) OffIndex(m int64) (int64, int) {
+	last := st[len(st)-1]
 	return last.Off(m), last.Index(m)
 }

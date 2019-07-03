@@ -140,12 +140,12 @@ func TestPageFixedNeedRebalance8(t *testing.T) {
 
 	off := int64(0)
 
-	off, _, _ = pl.Put(off, 0, []byte("key_aaaa"), []byte("value_aa"))
+	off, _, _ = pl.Insert(off, 0, []byte("key_aaaa"), []byte("value_aa"))
 	assert.Equal(t, true, pl.NeedRebalance(off))
 
-	off, _, _ = pl.Put(off, 1, []byte("key_aaaa"), []byte("value_aa"))
-	off, _, _ = pl.Put(off, 2, []byte("key_aaaa"), []byte("value_aa"))
-	off, _, _ = pl.Put(off, 3, []byte("key_aaaa"), []byte("value_aa"))
+	off, _, _ = pl.Insert(off, 1, []byte("key_aaaa"), []byte("value_aa"))
+	off, _, _ = pl.Insert(off, 2, []byte("key_aaaa"), []byte("value_aa"))
+	off, _, _ = pl.Insert(off, 3, []byte("key_aaaa"), []byte("value_aa"))
 
 	assert.Equal(t, false, pl.NeedRebalance(off))
 }
@@ -158,9 +158,9 @@ func TestPageFixedSiblings8(t *testing.T) {
 
 	off := int64(0)
 
-	off, _, _ = pl.PutInt64(off, 0, []byte("key_aaaa"), 10)
-	off, _, _ = pl.PutInt64(off, 1, []byte("key_bbbb"), 20)
-	off, _, _ = pl.PutInt64(off, 2, []byte("key_cccc"), 30)
+	off, _, _ = pl.InsertInt64(off, 0, []byte("key_aaaa"), 10)
+	off, _, _ = pl.InsertInt64(off, 1, []byte("key_bbbb"), 20)
+	off, _, _ = pl.InsertInt64(off, 2, []byte("key_cccc"), 30)
 
 	li, loff, roff := pl.Siblings(off, 0, 40)
 	assert.EqualValues(t, 0, li)
@@ -207,110 +207,110 @@ func TestPageFixedFree(t *testing.T) {
 }
 
 func testPagePutOnePage8(t *testing.T, pl PageLayout) int64 {
-	loff, roff, err := pl.Put(0, 0, []byte("key_aaaa"), []byte("value_aa"))
+	loff, roff, err := pl.Insert(0, 0, []byte("key_aaaa"), []byte("value_aa"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.Put(loff, 1, []byte("key_cccc"), []byte("value_cc"))
+	loff, roff, err = pl.Insert(loff, 1, []byte("key_cccc"), []byte("value_cc"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.Put(loff, 1, []byte("key_bbbb"), []byte("value_bb"))
+	loff, roff, err = pl.Insert(loff, 1, []byte("key_bbbb"), []byte("value_bb"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	assert.EqualValues(t, "key_aaaa", pl.Key(loff, 0))
-	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 1))
-	assert.EqualValues(t, "key_cccc", pl.Key(loff, 2))
+	assert.EqualValues(t, "key_aaaa", pl.Key(loff, 0, nil))
+	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 1, nil))
+	assert.EqualValues(t, "key_cccc", pl.Key(loff, 2, nil))
 
-	assert.EqualValues(t, "value_aa", pl.ValueCopy(loff, 0))
-	assert.EqualValues(t, "value_bb", pl.ValueCopy(loff, 1))
-	assert.EqualValues(t, "value_cc", pl.ValueCopy(loff, 2))
+	assert.EqualValues(t, "value_aa", pl.Value(loff, 0, nil))
+	assert.EqualValues(t, "value_bb", pl.Value(loff, 1, nil))
+	assert.EqualValues(t, "value_cc", pl.Value(loff, 2, nil))
 
 	return loff
 }
 
 func testPagePutSplit8(t *testing.T, pl PageLayout) {
-	loff, roff, err := pl.Put(0, 0, []byte("key_aaaa"), longval(0x10, "value_aa"))
+	loff, roff, err := pl.Insert(0, 0, []byte("key_aaaa"), longval(0x10, "value_aa"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.Put(loff, 1, []byte("key_cccc"), longval(0x10, "value_cc"))
+	loff, roff, err = pl.Insert(loff, 1, []byte("key_cccc"), longval(0x10, "value_cc"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.Put(loff, 1, []byte("key_bbbb"), longval(0x10, "value_bb"))
+	loff, roff, err = pl.Insert(loff, 1, []byte("key_bbbb"), longval(0x10, "value_bb"))
 	assert.NoError(t, err)
 
 	assert.EqualValues(t, 2, pl.NKeys(loff))
 	assert.EqualValues(t, 1, pl.NKeys(roff))
 
-	assert.EqualValues(t, "key_aaaa", pl.Key(loff, 0))
-	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 1))
-	assert.EqualValues(t, "key_cccc", pl.Key(roff, 0))
+	assert.EqualValues(t, "key_aaaa", pl.Key(loff, 0, nil))
+	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 1, nil))
+	assert.EqualValues(t, "key_cccc", pl.Key(roff, 0, nil))
 
-	assert.Equal(t, longval(0x10, "value_aa"), pl.ValueCopy(loff, 0))
-	assert.Equal(t, longval(0x10, "value_bb"), pl.ValueCopy(loff, 1))
-	assert.Equal(t, longval(0x10, "value_cc"), pl.ValueCopy(roff, 0))
+	assert.Equal(t, longval(0x10, "value_aa"), pl.Value(loff, 0, nil))
+	assert.Equal(t, longval(0x10, "value_bb"), pl.Value(loff, 1, nil))
+	assert.Equal(t, longval(0x10, "value_cc"), pl.Value(roff, 0, nil))
 
-	loff, roff, err = pl.Put(roff, 1, []byte("key_dddd"), longval(0x10, "value_dd"))
+	loff, roff, err = pl.Insert(roff, 1, []byte("key_dddd"), longval(0x10, "value_dd"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.Put(loff, 2, []byte("key_eeee"), longval(0x10, "value_ee"))
+	loff, roff, err = pl.Insert(loff, 2, []byte("key_eeee"), longval(0x10, "value_ee"))
 	assert.NoError(t, err)
 
 	assert.EqualValues(t, 1, pl.NKeys(loff))
 	assert.EqualValues(t, 2, pl.NKeys(roff))
 
-	assert.EqualValues(t, "key_cccc", pl.Key(loff, 0))
-	assert.EqualValues(t, "key_dddd", pl.Key(roff, 0))
-	assert.EqualValues(t, "key_eeee", pl.Key(roff, 1))
+	assert.EqualValues(t, "key_cccc", pl.Key(loff, 0, nil))
+	assert.EqualValues(t, "key_dddd", pl.Key(roff, 0, nil))
+	assert.EqualValues(t, "key_eeee", pl.Key(roff, 1, nil))
 
-	assert.Equal(t, longval(0x10, "value_cc"), pl.ValueCopy(loff, 0))
-	assert.Equal(t, longval(0x10, "value_dd"), pl.ValueCopy(roff, 0))
-	assert.Equal(t, longval(0x10, "value_ee"), pl.ValueCopy(roff, 1))
+	assert.Equal(t, longval(0x10, "value_cc"), pl.Value(loff, 0, nil))
+	assert.Equal(t, longval(0x10, "value_dd"), pl.Value(roff, 0, nil))
+	assert.Equal(t, longval(0x10, "value_ee"), pl.Value(roff, 1, nil))
 }
 
 func testPageKeyCmpLast8(t *testing.T, pl PageLayout) {
-	loff, roff, err := pl.Put(0, 0, []byte("key_aaaa"), []byte("value_aa"))
+	loff, roff, err := pl.Insert(0, 0, []byte("key_aaaa"), []byte("value_aa"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.Put(loff, 1, []byte("key_cccc"), []byte("value_cc"))
+	loff, roff, err = pl.Insert(loff, 1, []byte("key_cccc"), []byte("value_cc"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.Put(loff, 1, []byte("key_bbbb"), []byte("value_bb"))
+	loff, roff, err = pl.Insert(loff, 1, []byte("key_bbbb"), []byte("value_bb"))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
 	assert.Equal(t, 3, pl.NKeys(loff))
 
-	assert.Equal(t, 1, bytes.Compare(pl.Key(loff, 0), []byte(nil)))
-	assert.Equal(t, -1, bytes.Compare(pl.Key(loff, 0), []byte("key_bbbb")))
-	assert.Equal(t, 0, bytes.Compare(pl.Key(loff, 1), []byte("key_bbbb")))
-	assert.Equal(t, 1, bytes.Compare(pl.Key(loff, 2), []byte("key_bbbb")))
+	assert.Equal(t, 1, bytes.Compare(pl.Key(loff, 0, nil), []byte(nil)))
+	assert.Equal(t, -1, bytes.Compare(pl.Key(loff, 0, nil), []byte("key_bbbb")))
+	assert.Equal(t, 0, bytes.Compare(pl.Key(loff, 1, nil), []byte("key_bbbb")))
+	assert.Equal(t, 1, bytes.Compare(pl.Key(loff, 2, nil), []byte("key_bbbb")))
 
-	assert.EqualValues(t, "key_cccc", pl.LastKey(loff))
+	assert.EqualValues(t, "key_cccc", pl.LastKey(loff, nil))
 }
 
 func testPagePutInt648(t *testing.T, pl PageLayout) {
-	loff, roff, err := pl.PutInt64(0, 0, []byte("key_aaaa"), 1)
+	loff, roff, err := pl.InsertInt64(0, 0, []byte("key_aaaa"), 1)
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.PutInt64(loff, 1, []byte("key_cccc"), 3)
+	loff, roff, err = pl.InsertInt64(loff, 1, []byte("key_cccc"), 3)
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.PutInt64(loff, 1, []byte("key_bbbb"), 2)
+	loff, roff, err = pl.InsertInt64(loff, 1, []byte("key_bbbb"), 2)
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	assert.EqualValues(t, "key_aaaa", pl.Key(loff, 0))
-	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 1))
-	assert.EqualValues(t, "key_cccc", pl.Key(loff, 2))
+	assert.EqualValues(t, "key_aaaa", pl.Key(loff, 0, nil))
+	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 1, nil))
+	assert.EqualValues(t, "key_cccc", pl.Key(loff, 2, nil))
 
 	assert.EqualValues(t, 1, pl.Int64(loff, 0))
 	assert.EqualValues(t, 2, pl.Int64(loff, 1))
@@ -324,7 +324,7 @@ func testPageDelOnePage8(t *testing.T, loff int64, pl PageLayout) int64 {
 
 	old := loff
 
-	loff, err := pl.Del(loff, 0)
+	loff, err := pl.Delete(loff, 0)
 	assert.NoError(t, err)
 
 	log.Printf("Del %d, %x <- %x %+v\n%v", pl.(*FixedLayout).ver, loff, old, pl, dumpFile(pl))
@@ -333,19 +333,19 @@ func testPageDelOnePage8(t *testing.T, loff int64, pl PageLayout) int64 {
 		return NilPage
 	}
 
-	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 0))
-	assert.EqualValues(t, "key_cccc", pl.Key(loff, 1))
+	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 0, nil))
+	assert.EqualValues(t, "key_cccc", pl.Key(loff, 1, nil))
 
-	loff, err = pl.Del(loff, 1)
+	loff, err = pl.Delete(loff, 1)
 	assert.NoError(t, err)
 
 	if !assert.Equal(t, 1, pl.NKeys(loff)) {
 		return NilPage
 	}
 
-	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 0))
+	assert.EqualValues(t, "key_bbbb", pl.Key(loff, 0, nil))
 
-	loff, err = pl.Del(loff, 0)
+	loff, err = pl.Delete(loff, 0)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 0, pl.NKeys(loff))
@@ -379,7 +379,7 @@ func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl 
 	} {
 		for i := 0; i < tc.n; i++ {
 			v++
-			off, rr, err := pl.PutInt64(tc.off, i, []byte(fmt.Sprintf("key_%04x", v)), v)
+			off, rr, err := pl.InsertInt64(tc.off, i, []byte(fmt.Sprintf("key_%04x", v)), v)
 			if !assert.NoError(t, err) {
 				return
 			}
@@ -407,7 +407,7 @@ func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl 
 			return
 		}
 		for i := 0; i < n-z; i++ {
-			k := pl.Key(off, i)
+			k := pl.Key(off, i, nil)
 			assert.EqualValues(t, fmt.Sprintf("key_%04x", i+z+1), k)
 		}
 	}

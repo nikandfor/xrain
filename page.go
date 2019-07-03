@@ -21,18 +21,15 @@ type (
 		SetLeaf(p int64, y bool)
 
 		Search(p int64, k []byte) (i int, eq bool)
-		Key(p int64, i int) []byte
-		LastKey(p int64) []byte
+		Key(p int64, i int, buf []byte) []byte
+		LastKey(p int64, buf []byte) []byte
 
-		Value(p int64, i int, f func(v []byte))
-		ValueCopy(p int64, i int) []byte
+		Value(p int64, i int, buf []byte) []byte
 		Int64(p int64, i int) int64
 
-		Insert(p int64, i, kl, vl int, f func(k, v []byte)) (l, r int64, _ error)
-
-		Put(p int64, i int, k, v []byte) (loff, roff int64, _ error)
-		PutInt64(p int64, i int, k []byte, v int64) (loff, roff int64, _ error)
-		Del(p int64, i int) (int64, error)
+		Insert(p int64, i int, k, v []byte) (loff, roff int64, _ error)
+		InsertInt64(p int64, i int, k []byte, v int64) (loff, roff int64, _ error)
+		Delete(p int64, i int) (int64, error)
 
 		NeedRebalance(p int64) bool
 		Siblings(p int64, i int, pi int64) (li int, l, r int64)
@@ -163,13 +160,13 @@ func (l *BaseLayout) nkeys(p []byte) int {
 	return int(p[4])&^0x80<<8 | int(p[5])
 }
 
-func (l *BaseLayout) overflow(p []byte) int {
-	return (int(p[6])<<8 | int(p[7])) + 1
-}
-
-func (l *BaseLayout) setsize(p []byte, n int) {
+func (l *BaseLayout) setnkeys(p []byte, n int) {
 	p[4] = p[4]&0x80 | byte(n>>8&^0x80)
 	p[5] = byte(n)
+}
+
+func (l *BaseLayout) overflow(p []byte) int {
+	return (int(p[6])<<8 | int(p[7])) + 1
 }
 
 func (l *BaseLayout) setoverflow(p []byte, n int) {
@@ -269,7 +266,7 @@ func (l *FixedLayout) Alloc(leaf bool) (int64, error) {
 	}
 	p := l.b.Access(off, 0x10)
 	l.setleaf(p, leaf)
-	l.setsize(p, 0)
+	l.setnkeys(p, 0)
 	l.setheader(p)
 	l.b.Unlock(p)
 	return off, nil
@@ -302,8 +299,12 @@ func (l *FixedLayout) Search(off int64, k []byte) (i int, eq bool) {
 	return
 }
 
-func (l *FixedLayout) Key(off int64, i int) (r []byte) {
-	r = make([]byte, l.k)
+func (l *FixedLayout) Key(off int64, i int, buf []byte) (r []byte) {
+	if cap(buf) >= l.k {
+		r = buf[:l.k]
+	} else {
+		r = make([]byte, l.k)
+	}
 
 	p := l.b.Access(off, l.p)
 	v := l.v
@@ -318,8 +319,12 @@ func (l *FixedLayout) Key(off int64, i int) (r []byte) {
 	return
 }
 
-func (l *FixedLayout) LastKey(off int64) (r []byte) {
-	r = make([]byte, l.v)
+func (l *FixedLayout) LastKey(off int64, buf []byte) (r []byte) {
+	if cap(buf) >= l.k {
+		r = buf[:l.k]
+	} else {
+		r = make([]byte, l.k)
+	}
 
 	p := l.b.Access(off, l.p)
 	v := l.v
@@ -335,7 +340,7 @@ func (l *FixedLayout) LastKey(off int64) (r []byte) {
 	return
 }
 
-func (l *FixedLayout) Value(off int64, i int, f func(v []byte)) {
+func (l *FixedLayout) Value(off int64, i int, buf []byte) []byte {
 	v := l.v
 
 	p := l.b.Access(off, l.p)
@@ -344,32 +349,20 @@ func (l *FixedLayout) Value(off int64, i int, f func(v []byte)) {
 	}
 	s := 16 + i*(l.k+v) + l.k
 
-	f(p[s : s+v])
+	buf = append(buf[:0], p[s:s+v]...)
+
 	l.b.Unlock(p)
 
-	return
+	return buf
 }
 
 func (l *FixedLayout) Int64(off int64, i int) (r int64) {
-	l.Value(off, i, func(v []byte) {
-		r = int64(binary.BigEndian.Uint64(v))
-	})
-	return
+	var buf [8]byte
+	v := l.Value(off, i, buf[:])
+	return int64(binary.BigEndian.Uint64(v))
 }
 
-func (l *FixedLayout) ValueCopy(off int64, i int) (r []byte) {
-	v := l.v
-	if v < 8 {
-		v = 8
-	}
-	r = make([]byte, v)
-	l.Value(off, i, func(v []byte) {
-		copy(r, v)
-	})
-	return
-}
-
-func (l *FixedLayout) Del(off int64, i int) (_ int64, err error) {
+func (l *FixedLayout) Delete(off int64, i int) (_ int64, err error) {
 	var ver int64
 	var alloc bool
 again:
@@ -396,7 +389,7 @@ again:
 		end := 16 + n*kv
 
 		copy(p[st:], p[st+kv:end])
-		l.setsize(p, n-1)
+		l.setnkeys(p, n-1)
 	}()
 	l.b.Unlock(p)
 
@@ -411,7 +404,14 @@ again:
 	return off, nil
 }
 
-func (l *FixedLayout) Insert(off int64, i, _, _ int, f func(k, v []byte)) (loff, roff int64, err error) {
+func (l *FixedLayout) Insert(off int64, i int, k, v []byte) (loff, roff int64, err error) {
+	if len(k) != l.k {
+		panic(len(k))
+	}
+	if len(v) != l.v {
+		panic(len(v))
+	}
+
 	loff = off
 	var ver int64
 	var alloc, split bool
@@ -436,7 +436,7 @@ again:
 
 		if st < len(p) {
 			if ver == l.ver {
-				l.insertPage(p, i, n, f)
+				l.insertPage(p, i, n, k, v)
 			}
 		} else {
 			split = true
@@ -479,15 +479,15 @@ again:
 			m = (n + 1) / 2
 		}
 
-		l.setsize(lp, m)
-		l.setsize(rp, n-m)
+		l.setnkeys(lp, m)
+		l.setnkeys(rp, n-m)
 
 		copy(rp[16:], lp[16+m*kv:16+n*kv])
 
 		if i <= m {
-			l.insertPage(lp, i, m, f)
+			l.insertPage(lp, i, m, k, v)
 		} else {
-			l.insertPage(rp, i-m, n-m, f)
+			l.insertPage(rp, i-m, n-m, k, v)
 		}
 	}()
 	l.b.Unlock2(lp, rp)
@@ -495,32 +495,19 @@ again:
 	return
 }
 
-func (l *FixedLayout) insertPage(p []byte, i, n int, f func(k, v []byte)) {
+func (l *FixedLayout) InsertInt64(off int64, i int, k []byte, v int64) (loff, roff int64, err error) {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(v))
+	return l.Insert(off, i, k, buf[:])
+}
+
+func (l *FixedLayout) insertPage(p []byte, i, n int, k, v []byte) {
 	st := 16 + i*l.kv
 	end := 16 + n*l.kv
 	copy(p[st+l.kv:], p[st:end])
-	f(p[st:st+l.k], p[st+l.k:st+l.kv])
-	l.setsize(p, n+1)
-}
-
-func (l *FixedLayout) Put(off int64, i int, k, v []byte) (loff, roff int64, err error) {
-	if len(k) != l.k {
-		panic(len(k))
-	}
-	if len(v) != l.v {
-		panic(len(v))
-	}
-	return l.Insert(off, i, 0, 0, func(km, vm []byte) {
-		copy(km, k)
-		copy(vm, v)
-	})
-}
-
-func (l *FixedLayout) PutInt64(off int64, i int, k []byte, v int64) (loff, roff int64, err error) {
-	return l.Insert(off, i, 0, 0, func(km, vm []byte) {
-		copy(km, k)
-		binary.BigEndian.PutUint64(vm, uint64(v))
-	})
+	copy(p[st:st+l.k], k)
+	copy(p[st+l.k:st+l.kv], v)
+	l.setnkeys(p, n+1)
 }
 
 func (l *FixedLayout) NeedRebalance(off int64) (r bool) {
@@ -612,7 +599,7 @@ again:
 
 		if 16+sum*kv <= len(lp) {
 			copy(lp[lend:], rp[16:rend])
-			l.setsize(lp, sum)
+			l.setnkeys(lp, sum)
 
 			rfree = true
 			return
@@ -625,14 +612,14 @@ again:
 			diff := lend - end
 			copy(rp[16+diff:], rp[16:rend])
 			copy(rp[16:], lp[end:lend])
-			l.setsize(lp, m)
-			l.setsize(rp, sum-m)
+			l.setnkeys(lp, m)
+			l.setnkeys(rp, sum-m)
 		} else {
 			diff := rend - end
 			copy(lp[lend:], rp[16:16+diff])
 			copy(rp[16:], rp[16+diff:rend])
-			l.setsize(rp, m)
-			l.setsize(lp, sum-m)
+			l.setnkeys(rp, m)
+			l.setnkeys(lp, sum-m)
 		}
 	}()
 	l.b.Unlock2(lp, rp)

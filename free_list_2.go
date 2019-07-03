@@ -123,13 +123,14 @@ func (l *Freelist2) Alloc(n int) (off int64, err error) {
 		}
 	}
 
-	var it Iterator
+	var st Stack
 next:
-	it = l.t.Step(it, false)
-	if it == nil {
+	st = l.t.Step(st, false)
+	if st == nil {
 		return l.allocGrow(n)
 	}
-	last := l.pl.Key(it.OffIndex(l.mask))
+	off, i := st.OffIndex(l.mask)
+	last := l.pl.Key(off, i, nil)
 
 	off = int64(binary.BigEndian.Uint64(last))
 
@@ -276,7 +277,7 @@ func (l *Freelist2) SetVer(ver, keep int64) {
 		keep = -1
 	}
 	l.ver, l.keep = ver, keep
-	l.t.SetVer(l.ver)
+	l.t.PageLayout().SetVer(l.ver)
 }
 
 func (l *Freelist2) unlock() (err error) {
@@ -321,11 +322,12 @@ func (l *Freelist2) shrinkFile() (err error) {
 	//	tlog.Printf("try to shrinkFile %d/%d %x\n%v", l.ver, l.keep, fend, dumpFile(l.pl))
 
 	for {
-		it := l.t.Step(nil, true)
-		if it == nil {
+		st := l.t.Step(nil, true)
+		if st == nil {
 			break
 		}
-		last := l.pl.Key(it.OffIndex(l.mask))
+		off, i := st.OffIndex(l.mask)
+		last := l.pl.Key(off, i, nil)
 
 		bst := int64(binary.BigEndian.Uint64(last))
 		bend := bst&^l.mask + l.page<<uint(bst&l.mask)

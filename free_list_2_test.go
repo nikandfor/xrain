@@ -127,8 +127,8 @@ func TestFreelist2AllocPow(t *testing.T) {
 
 	// first page is freed now, but it can't be allocated yet
 
-	it := tr.Step(nil, false)
-	assert.NotNil(t, it, "non-nil freelist expected")
+	st := tr.Step(nil, false)
+	assert.NotNil(t, st, "non-nil freelist expected")
 
 	off, err = fl.Alloc(2)
 	assert.NoError(t, err)
@@ -149,14 +149,15 @@ func TestFreelist2AllocPow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(6*Page), off, "%x != %x", 6*Page, off)
 
-	it = tr.Step(nil, false)
-	if !assert.NotNil(t, it, "nil freelist expected") {
+	st = tr.Step(nil, false)
+	if !assert.NotNil(t, st, "nil freelist expected") {
 		return
 	}
-	next := pl.Key(it.OffIndex(Mask))
+	off, i := st.OffIndex(Mask)
+	next := pl.Key(off, i, nil)
 	assert.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0}, next)
-	it = tr.Step(it, false)
-	assert.Nil(t, it, "nil freelist expected")
+	st = tr.Step(st, false)
+	assert.Nil(t, st, "nil freelist expected")
 
 	if t.Failed() {
 		dump, psz = dumpPage(pl, tr.root)
@@ -259,8 +260,9 @@ func TestFreelist2Auto(t *testing.T) {
 		}
 		walk(tr.root)
 
-		for it := tr.Step(nil, false); it != nil; it = tr.Step(it, false) {
-			k := pl.Key(it.OffIndex(fl.mask))
+		for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
+			poff, pi := st.OffIndex(fl.mask)
+			k := pl.Key(poff, pi, nil)
 
 			off := int64(binary.BigEndian.Uint64(k))
 			size := uint(off & fl.mask)
@@ -327,7 +329,7 @@ func TestFreelist2Auto(t *testing.T) {
 			p := b.Access(off, 0x10)
 			pl.setver(p, ver) //nolint:scopelint
 			pl.setoverflow(p, n)
-			pl.setsize(p, 0)
+			pl.setnkeys(p, 0)
 			b.Unlock(p)
 		} else if len(alloc) != 0 {
 			i := rand.Intn(len(alloc))
