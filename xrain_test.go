@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"log"
 	"math/rand"
+	"os"
 	"sync"
 	"testing"
 
+	"github.com/nikandfor/tlog"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -33,6 +35,10 @@ type (
 		Err        error
 	}
 )
+
+func init() {
+	tlog.DefaultLogger = tlog.NewLogger(tlog.NewConsoleWriter(os.Stderr, tlog.LdetFlags))
+}
 
 const (
 	TaskGet TaskType = iota != 0

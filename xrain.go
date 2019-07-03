@@ -50,10 +50,10 @@ type (
 
 		page int64
 
-		mu    sync.Mutex
-		ver   int64
-		keep  int64
-		keepl map[int64]int
+		mu        sync.Mutex
+		ver, verp int64
+		keep      int64
+		keepl     map[int64]int
 
 		wmu sync.Mutex
 	}
@@ -108,6 +108,7 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	tr := d.tr
 	ver := d.ver
 	d.keepl[ver]++
+	//	tlog.Printf("View      %2d  %v", ver, d.keepl)
 	d.mu.Unlock()
 
 	defer func() {
@@ -177,9 +178,9 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 
 	d.mu.Lock()
 	d.updateKeep()
-	ver, keep := d.ver, d.keep
+	d.verp++
+	ver, keep := d.verp, d.keep
 	d.mu.Unlock()
-	ver++
 
 	d.fl.SetVer(ver, keep)
 	d.t.SetVer(ver)
@@ -191,6 +192,8 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 		return err
 	}
 
+	//	tlog.Printf("Update %2d %2d  %2d\n%v", ver, keep, batch, dumpFile(d.t.PageLayout()))
+
 	d.writeRoot(ver)
 
 	err = d.batch.Wait(batch)
@@ -201,8 +204,11 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	tr := d.t.Copy()
 
 	d.mu.Lock()
-	d.ver++
-	d.tr = tr
+	//	tlog.Printf("Update %2d %2d  %2d exit", ver, d.ver, batch)
+	if ver > d.ver {
+		d.ver = ver
+		d.tr = tr
+	}
 	d.mu.Unlock()
 
 	return nil
@@ -321,6 +327,8 @@ again:
 			p = p[:d.page]
 		}
 
+		d.verp = d.ver
+
 		page := int64(binary.BigEndian.Uint64(p[0x18:]))
 		if page != d.page {
 			d.page = page
@@ -438,7 +446,7 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 			tp = 'D'
 		}
 		ver := base.getver(p)
-		size = base.extended(p)
+		size = base.nsize(p)
 		n := l.NKeys(off)
 		fmt.Fprintf(&buf, "%4x: %c ext %2d ver %3d  nkeys %4d  ", off, tp, size-1, ver, n)
 		if kvl != nil {

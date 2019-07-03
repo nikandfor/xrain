@@ -37,6 +37,7 @@ loop:
 
 		b.l.Lock()
 		b.batch++
+		//	tlog.Printf("Sync          %2d", b.batch)
 		b.l.Unlock()
 
 		err := b.sync()
@@ -70,7 +71,7 @@ func (b *Batcher) Lock() int {
 	default:
 	}
 
-	return b.batch + 1
+	return b.batch + b.batch&1 + 1
 }
 
 func (b *Batcher) Wait(bt int) error {
