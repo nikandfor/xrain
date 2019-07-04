@@ -351,10 +351,21 @@ func (l *FixedLayout) Value(off int64, i int, buf []byte) []byte {
 	return buf
 }
 
-func (l *FixedLayout) Int64(off int64, i int) (r int64) {
-	var buf [8]byte
-	v := l.Value(off, i, buf[:])
-	return int64(binary.BigEndian.Uint64(v))
+func (l *FixedLayout) Int64(off int64, i int) int64 {
+	v := l.v
+
+	p := l.b.Access(off, l.p)
+	defer l.b.Unlock(p)
+
+	if !l.isleaf(p) {
+		v = 8
+	}
+	if v != 8 {
+		panic(v)
+	}
+	s := 16 + i*(l.k+v) + l.k
+
+	return int64(binary.BigEndian.Uint64(p[s:]))
 }
 
 func (l *FixedLayout) Delete(off int64, i int) (_ int64, err error) {
@@ -429,7 +440,7 @@ again:
 		n := l.nkeys(p)
 		st := 16 + n*kv
 
-		if st < len(p) {
+		if st+kv <= len(p) {
 			if ver == l.ver {
 				l.insertPage(p, i, n, k, v)
 			}
@@ -514,7 +525,7 @@ func (l *FixedLayout) NeedRebalance(off int64) (r bool) {
 	return
 }
 
-func (l *FixedLayout) Siblings(off int64, i int, poff int64) (li int, loff, roff int64) {
+func (l *FixedLayout) Siblings(off int64, i int, ioff int64) (li int, loff, roff int64) {
 	readoff := func(p []byte, i int) int64 {
 		s := 16 + i*(l.k+8) + l.k
 		return int64(binary.BigEndian.Uint64(p[s:]))
@@ -524,12 +535,12 @@ func (l *FixedLayout) Siblings(off int64, i int, poff int64) (li int, loff, roff
 	n := l.nkeys(p)
 	if i+1 < n && i&1 == 0 {
 		li = i
-		loff = poff
+		loff = ioff
 		roff = readoff(p, i+1)
 	} else {
 		li = i - 1
 		loff = readoff(p, i-1)
-		roff = poff
+		roff = ioff
 	}
 	l.b.Unlock(p)
 	return
@@ -584,6 +595,8 @@ again:
 				d = -d
 			}
 			if d <= 1 {
+				lalloc = false
+				ralloc = false
 				return // do not rebalance if no profit
 			}
 		}
@@ -619,7 +632,7 @@ again:
 	}()
 	l.b.Unlock2(lp, rp)
 	if lalloc {
-		loff, err = l.realloc(l.pm, loff, rver)
+		loff, err = l.realloc(l.pm, loff, lver)
 		if err != nil {
 			return
 		}

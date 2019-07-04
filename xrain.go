@@ -418,11 +418,11 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 	var fl *FixedLayout
 	var page int64
 	switch l := l.(type) {
-	//	case *KVLayout:
-	//		b = l.b
-	//		base = &l.BaseLayout
-	//		kvl = l
-	//		page = l.page
+	case *KVLayout:
+		b = l.b
+		base = &l.BaseLayout
+		kvl = l
+		page = l.page
 	case *FixedLayout:
 		b = l.b
 		base = &l.BaseLayout
@@ -434,47 +434,47 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 
 	var buf bytes.Buffer
 
-	var size int
+	var size, n int
 
 	p := b.Access(off, page)
 	{
 		tp := 'B'
-		if l.IsLeaf(off) {
+		if base.isleaf(p) {
 			tp = 'D'
 		}
 		ver := base.getver(p)
 		over := base.overflow(p)
 		size = over + 1
-		n := l.NKeys(off)
+		n = base.nkeys(p)
 		fmt.Fprintf(&buf, "%4x: %c over %2d ver %3d  nkeys %4d  ", off, tp, over, ver, n)
 		if kvl != nil {
-			//	fmt.Fprintf(&buf, "datasize %3x free space %3x\n", kvl.datasize(p), len(p)-kvl.datasize(p)-16)
+			fmt.Fprintf(&buf, "datasize %3x free space %3x\n", kvl.pagedatasize(p, n), kvl.pagefree(p, n))
 		} else {
 			fmt.Fprintf(&buf, "datasize %3x free space %3x\n", n*16, len(p)-n*16-16)
 		}
-		if fl != nil {
+	}
+	b.Unlock(p)
+	if fl != nil {
+		for i := 0; i < n; i++ {
+			k := l.Key(off, i, nil)
+			v := l.Int64(off, i)
+			fmt.Fprintf(&buf, "    %2x -> %4x\n", k, v)
+		}
+	} else {
+		if l.IsLeaf(off) {
+			for i := 0; i < n; i++ {
+				k := l.Key(off, i, nil)
+				v := l.Value(off, i, nil)
+				fmt.Fprintf(&buf, "    %q -> %q\n", k, v)
+			}
+		} else {
 			for i := 0; i < n; i++ {
 				k := l.Key(off, i, nil)
 				v := l.Int64(off, i)
-				fmt.Fprintf(&buf, "    %2x -> %4x\n", k, v)
-			}
-		} else {
-			if l.IsLeaf(off) {
-				for i := 0; i < n; i++ {
-					k := l.Key(off, i, nil)
-					v := l.Value(off, i, nil)
-					fmt.Fprintf(&buf, "    %q -> %q\n", k, v)
-				}
-			} else {
-				for i := 0; i < n; i++ {
-					k := l.Key(off, i, nil)
-					v := l.Int64(off, i)
-					fmt.Fprintf(&buf, "    %4x <- % 2x (%q)\n", v, k, k)
-				}
+				fmt.Fprintf(&buf, "    %2x | %q -> %4x | %q\n", k, k, v, v)
 			}
 		}
 	}
-	b.Unlock(p)
 
 	return buf.String(), base.page * int64(size)
 }
@@ -483,9 +483,9 @@ func dumpFile(l PageLayout) string {
 	var b Back
 	var page int64
 	switch l := l.(type) {
-	//	case *KVLayout:
-	//		b = l.b
-	//		page = l.page
+	case *KVLayout:
+		b = l.b
+		page = l.page
 	case *FixedLayout:
 		b = l.b
 		page = l.page
