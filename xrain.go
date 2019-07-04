@@ -443,9 +443,10 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 			tp = 'D'
 		}
 		ver := base.getver(p)
-		size = base.overflow(p)
+		over := base.overflow(p)
+		size = over + 1
 		n := l.NKeys(off)
-		fmt.Fprintf(&buf, "%4x: %c ext %2d ver %3d  nkeys %4d  ", off, tp, size-1, ver, n)
+		fmt.Fprintf(&buf, "%4x: %c over %2d ver %3d  nkeys %4d  ", off, tp, over, ver, n)
 		if kvl != nil {
 			//	fmt.Fprintf(&buf, "datasize %3x free space %3x\n", kvl.datasize(p), len(p)-kvl.datasize(p)-16)
 		} else {

@@ -46,11 +46,7 @@ type (
 		free Freelist
 	}
 
-	KVLayout struct { // base [16]byte, keys [size]int16, data []byte
-		BaseLayout
-	}
-
-	FixedLayout struct { // base [16]byte, _ [14]byte, keyval []{int64,int64}
+	FixedLayout struct { // base [16]byte, keyval []{fixed,fixed}
 		BaseLayout
 		k, v, kv, pm int
 		p            int64
@@ -110,7 +106,7 @@ func (l *BaseLayout) Free(off int64, r bool) error {
 
 	p := l.b.Access(off, 0x10)
 	ver := l.getver(p)
-	n := l.overflow(p)
+	n := 1 + l.overflow(p)
 	l.b.Unlock(p)
 
 	return l.free.Free(n, off, ver)
@@ -166,11 +162,10 @@ func (l *BaseLayout) setnkeys(p []byte, n int) {
 }
 
 func (l *BaseLayout) overflow(p []byte) int {
-	return (int(p[6])<<8 | int(p[7])) + 1
+	return (int(p[6])<<8 | int(p[7]))
 }
 
 func (l *BaseLayout) setoverflow(p []byte, n int) {
-	n--
 	p[6] = byte(n >> 8)
 	p[7] = byte(n)
 }
@@ -245,7 +240,7 @@ func (l *FixedLayout) Free(off int64, r bool) (err error) {
 	l.b.Unlock(p)
 
 	for _, off := range sub {
-		err = l.BaseLayout.Free(off, true)
+		err = l.Free(off, true)
 		if err != nil {
 			return
 		}
@@ -256,7 +251,7 @@ func (l *FixedLayout) Free(off int64, r bool) (err error) {
 
 func (l *FixedLayout) setheader(p []byte) {
 	l.setver(p, l.ver)
-	l.setoverflow(p, l.pm)
+	l.setoverflow(p, l.pm-1)
 }
 
 func (l *FixedLayout) Alloc(leaf bool) (int64, error) {

@@ -235,7 +235,7 @@ func TestFreelist2Auto(t *testing.T) {
 		walk = func(r int64) {
 			p := b.Access(r, 0x10)
 			{
-				ext := pl.overflow(p)
+				ext := 1 + pl.overflow(p)
 				tree += 1 << nsize(ext)
 
 				i := 0
@@ -328,7 +328,7 @@ func TestFreelist2Auto(t *testing.T) {
 			//	log.Printf("alloced %d at %x, next: %x", n, off, fl.next)
 			p := b.Access(off, 0x10)
 			pl.setver(p, ver) //nolint:scopelint
-			pl.setoverflow(p, n)
+			pl.setoverflow(p, n-1)
 			pl.setnkeys(p, 0)
 			b.Unlock(p)
 		} else if len(alloc) != 0 {
@@ -412,7 +412,7 @@ func TestFreelistShrinkFile(t *testing.T) {
 	pver := func(off int64) (ver, size int64) {
 		p := b.Access(off, 0x10)
 		ver = pl.getver(p)
-		size = int64(pl.overflow(p)) * Page
+		size = int64(1+pl.overflow(p)) * Page
 		b.Unlock(p)
 		return
 	}
