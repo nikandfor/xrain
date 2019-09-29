@@ -2,6 +2,7 @@ package xrain
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
@@ -158,9 +159,9 @@ func TestPageFixedSiblings8(t *testing.T) {
 
 	off := int64(0)
 
-	off, _, _ = pl.InsertInt64(off, 0, []byte("key_aaaa"), 10)
-	off, _, _ = pl.InsertInt64(off, 1, []byte("key_bbbb"), 20)
-	off, _, _ = pl.InsertInt64(off, 2, []byte("key_cccc"), 30)
+	off, _, _ = pl.Insert(off, 0, []byte("key_aaaa"), intval(10))
+	off, _, _ = pl.Insert(off, 1, []byte("key_bbbb"), intval(20))
+	off, _, _ = pl.Insert(off, 2, []byte("key_cccc"), intval(30))
 
 	li, loff, roff := pl.Siblings(off, 0, 40)
 	assert.EqualValues(t, 0, li)
@@ -291,20 +292,18 @@ func testPageKeyCmpLast8(t *testing.T, pl PageLayout) {
 	assert.Equal(t, -1, bytes.Compare(pl.Key(loff, 0, nil), []byte("key_bbbb")))
 	assert.Equal(t, 0, bytes.Compare(pl.Key(loff, 1, nil), []byte("key_bbbb")))
 	assert.Equal(t, 1, bytes.Compare(pl.Key(loff, 2, nil), []byte("key_bbbb")))
-
-	assert.EqualValues(t, "key_cccc", pl.LastKey(loff, nil))
 }
 
 func testPagePutInt648(t *testing.T, pl PageLayout) {
-	loff, roff, err := pl.InsertInt64(0, 0, []byte("key_aaaa"), 1)
+	loff, roff, err := pl.Insert(0, 0, []byte("key_aaaa"), intval(1))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.InsertInt64(loff, 1, []byte("key_cccc"), 3)
+	loff, roff, err = pl.Insert(loff, 1, []byte("key_cccc"), intval(3))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	loff, roff, err = pl.InsertInt64(loff, 1, []byte("key_bbbb"), 2)
+	loff, roff, err = pl.Insert(loff, 1, []byte("key_bbbb"), intval(2))
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
@@ -379,7 +378,7 @@ func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl 
 	} {
 		for i := 0; i < tc.n; i++ {
 			v++
-			off, rr, err := pl.InsertInt64(tc.off, i, []byte(fmt.Sprintf("key_%04x", v)), v)
+			off, rr, err := pl.Insert(tc.off, i, []byte(fmt.Sprintf("key_%04x", v)), intval(v))
 			if !assert.NoError(t, err) {
 				return
 			}
@@ -436,6 +435,12 @@ func testPageRebalance8(t *testing.T, pl PageLayout, ln, rn int, b *MemBack, fl 
 func longval(l int, v string) []byte {
 	r := make([]byte, l)
 	copy(r, v)
+	return r
+}
+
+func intval(v int64) []byte {
+	r := make([]byte, 8)
+	binary.BigEndian.PutUint64(r, uint64(v))
 	return r
 }
 

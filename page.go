@@ -22,14 +22,15 @@ type (
 
 		Search(p int64, k []byte) (i int, eq bool)
 		Key(p int64, i int, buf []byte) []byte
-		LastKey(p int64, buf []byte) []byte
 
 		Value(p int64, i int, buf []byte) []byte
 		Int64(p int64, i int) int64
 
 		Insert(p int64, i int, k, v []byte) (loff, roff int64, _ error)
-		InsertInt64(p int64, i int, k []byte, v int64) (loff, roff int64, _ error)
 		Delete(p int64, i int) (int64, error)
+
+		UpdatePageLink(p int64, i int, c int64) (loff, roff int64, _ error)
+		InsertPageLink(p int64, i int, c int64) (loff, roff int64, _ error)
 
 		NeedRebalance(p int64) bool
 		Siblings(p int64, i int, pi int64) (li int, l, r int64)
@@ -314,27 +315,6 @@ func (l *FixedLayout) Key(off int64, i int, buf []byte) (r []byte) {
 	return
 }
 
-func (l *FixedLayout) LastKey(off int64, buf []byte) (r []byte) {
-	if cap(buf) >= l.k {
-		r = buf[:l.k]
-	} else {
-		r = make([]byte, l.k)
-	}
-
-	p := l.b.Access(off, l.p)
-	v := l.v
-	if !l.isleaf(p) {
-		v = 8
-	}
-	i := l.nkeys(p) - 1
-	s := 16 + i*(l.k+v)
-
-	copy(r, p[s:s+l.k])
-	l.b.Unlock(p)
-
-	return
-}
-
 func (l *FixedLayout) Value(off int64, i int, buf []byte) []byte {
 	v := l.v
 
@@ -408,6 +388,58 @@ again:
 	}
 
 	return off, nil
+}
+
+func (l *FixedLayout) UpdatePageLink(off int64, i int, cp int64) (loff, roff int64, err error) {
+	lk := make([]byte, l.k+8)
+
+	p0, p1 := l.b.Access2(off, l.p, cp, l.p)
+	// parent page old key
+	//	s0 := 16 + i*(l.k+8)
+
+	// child page last key
+	v := l.v
+	if !l.isleaf(p1) {
+		v = 8
+	}
+	j := l.nkeys(p1) - 1
+	s1 := 16 + j*(l.k+v)
+
+	//	eq := bytes.Equal(p0[s0:s0+l.k], p1[s1:s1+l.k])
+
+	//	if eq {
+	copy(lk[:l.k], p1[s1:s1+l.k])
+	//	}
+	l.b.Unlock2(p0, p1)
+
+	loff, err = l.Delete(off, i)
+	if err != nil {
+		return
+	}
+
+	binary.BigEndian.PutUint64(lk[l.k:], uint64(cp))
+
+	return l.Insert(off, i, lk[:l.k], lk[l.k:])
+}
+
+func (l *FixedLayout) InsertPageLink(off int64, i int, cp int64) (loff, roff int64, err error) {
+	lk := make([]byte, l.k+8)
+
+	p0, p1 := l.b.Access2(off, l.p, cp, l.p)
+	// child page last key
+	v := l.v
+	if !l.isleaf(p1) {
+		v = 8
+	}
+	j := l.nkeys(p1) - 1
+	s1 := 16 + j*(l.k+v)
+
+	copy(lk[:l.k], p1[s1:s1+l.k])
+	l.b.Unlock2(p0, p1)
+
+	binary.BigEndian.PutUint64(lk[l.k:], uint64(cp))
+
+	return l.Insert(off, i, lk[:l.k], lk[l.k:])
 }
 
 func (l *FixedLayout) Insert(off int64, i int, k, v []byte) (loff, roff int64, err error) {
@@ -499,12 +531,6 @@ again:
 	l.b.Unlock2(lp, rp)
 
 	return
-}
-
-func (l *FixedLayout) InsertInt64(off int64, i int, k []byte, v int64) (loff, roff int64, err error) {
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], uint64(v))
-	return l.Insert(off, i, k, buf[:])
 }
 
 func (l *FixedLayout) insertPage(p []byte, i, n int, k, v []byte) {
@@ -656,8 +682,4 @@ again:
 	}
 
 	return
-}
-
-func (l *FixedLayout) copyPage(noff, off int64) {
-	l.b.Copy(noff, off, l.p)
 }

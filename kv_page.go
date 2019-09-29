@@ -175,19 +175,6 @@ func (l *KVLayout) Key(off int64, i int, buf []byte) (r []byte) {
 	return
 }
 
-func (l *KVLayout) LastKey(off int64, buf []byte) (r []byte) {
-	p := l.b.Access(off, l.page)
-	n := l.nkeys(p)
-	dst := l.dataoff(p, n-1)
-	kl := int(p[dst+1])
-	dst += 2
-
-	r = append(buf[:0], p[dst:dst+kl]...)
-	l.b.Unlock(p)
-
-	return
-}
-
 func (l *KVLayout) Value(off int64, i int, buf []byte) (r []byte) {
 	p := l.b.Access(off, l.page)
 
@@ -254,6 +241,60 @@ again:
 	}
 
 	return off, nil
+}
+
+func (l *KVLayout) UpdatePageLink(off int64, i int, cp int64) (loff, roff int64, err error) {
+	var lk []byte
+
+	p0, p1 := l.b.Access2(off, l.page, cp, l.page)
+	// parent page old key
+	//	dst0 := l.dataoff(p0, i)
+	//	kl0 := int(p0[dst0+1])
+	//	dst0 += 2
+
+	// child page last key
+	n := l.nkeys(p1)
+	dst1 := l.dataoff(p1, n-1)
+	kl1 := int(p1[dst1+1])
+	dst1 += 2
+
+	//	eq := bytes.Equal(p0[dst0:dst0+kl0], p1[dst1:dst1+kl1])
+
+	//	if eq {
+	lk = make([]byte, kl1+8)
+	copy(lk, p1[dst1:dst1+kl1])
+	//	}
+
+	l.b.Unlock2(p0, p1)
+
+	loff, err = l.Delete(off, i)
+	if err != nil {
+		return
+	}
+
+	binary.BigEndian.PutUint64(lk[kl1:], uint64(cp))
+
+	return l.Insert(off, i, lk[:kl1], lk[kl1:])
+}
+
+func (l *KVLayout) InsertPageLink(off int64, i int, cp int64) (loff, roff int64, err error) {
+	var lk []byte
+
+	p0, p1 := l.b.Access2(off, l.page, cp, l.page)
+	// child page last key
+	n := l.nkeys(p1)
+	dst1 := l.dataoff(p1, n-1)
+	kl1 := int(p1[dst1+1])
+	dst1 += 2
+
+	lk = make([]byte, kl1+8)
+	copy(lk, p1[dst1:dst1+kl1])
+
+	l.b.Unlock2(p0, p1)
+
+	binary.BigEndian.PutUint64(lk[kl1:], uint64(cp))
+
+	return l.Insert(off, i, lk[:kl1], lk[kl1:])
 }
 
 func (l *KVLayout) Insert(off int64, i int, k, v []byte) (loff, roff int64, err error) {

@@ -2,7 +2,6 @@ package xrain
 
 import (
 	"encoding/binary"
-	"log"
 )
 
 type (
@@ -210,69 +209,58 @@ func (t *FileTree) Out(s Stack, l, r int64) (err error) {
 		// rebalance if needed
 		if r == NilPage && t.p.NeedRebalance(l) {
 			i, l, r = t.p.Siblings(off, i, l)
-			if r != NilPage {
-				l, r, err = t.p.Rebalance(l, r)
-				if err != nil {
-					return err
-				}
-				//	log.Printf("rebalanced %x r %x n %d", l, r, t.p.NKeys(l))
-				rdel = true
+			//	if r != NilPage {
+			l, r, err = t.p.Rebalance(l, r)
+			if err != nil {
+				return err
 			}
+			//	log.Printf("rebalanced %x r %x n %d", l, r, t.p.NKeys(l))
+			rdel = true
+			//	}
 		}
 
 		//	log.Printf("stage0 d %d off %3x i %d lr %3x %3x\n%v", d, off, i, l, r, dumpFile(t.p))
 
-		// delete old link
-		off, err = t.p.Delete(off, i)
+		pl, pr, err := t.p.UpdatePageLink(off, i, l)
 		if err != nil {
 			return err
 		}
 
-		if rdel {
-			off, err = t.p.Delete(off, i)
-			if err != nil {
-				return err
-			}
-		}
-
-		//	log.Printf("stage1 d %d off %3x i %d lr %3x %3x\n%v", d, off, i, l, r, dumpFile(t.p))
-
-		// put left new child
-		lk := t.p.LastKey(l, nil)
-		pl, pr, err := t.p.InsertInt64(off, i, lk, l)
-		if err != nil {
-			return err
-		}
-
-		// don't have right new child
 		if r == NilPage {
 			l, r = pl, pr
 			continue
 		}
 
-		//	log.Printf("stage2 d %d par %3x %3x i %d lr %3x %3x", d, pl, pr, i, l, r)
-		//	log.Printf("page now\n%v", dumpPage(t.p, off))
-
-		rk := t.p.LastKey(r, nil)
-		// we didn't split parent page yet
 		if pr == NilPage {
-			pl, pr, err = t.p.InsertInt64(pl, i+1, rk, r)
+			if rdel {
+				// update key
+				pl, pr, err = t.p.UpdatePageLink(pl, i+1, r)
+			} else {
+				// insert
+				pl, pr, err = t.p.InsertPageLink(pl, i+1, r)
+			}
 			if err != nil {
 				return err
 			}
+
 			l, r = pl, pr
 			continue
 		}
 
-		log.Printf("pl pr %x %x   lk %q rk %q", pl, pr, lk, rk)
-
 		i++
 		var p2 int64
-		// at which page our index are?
 		if m := t.p.NKeys(pl); i < m {
-			pl, p2, err = t.p.InsertInt64(pl, i, rk, r)
+			if rdel {
+				pl, p2, err = t.p.UpdatePageLink(pl, i, r)
+			} else {
+				pl, p2, err = t.p.InsertPageLink(pl, i, r)
+			}
 		} else {
-			pr, p2, err = t.p.InsertInt64(pr, i-m, rk, r)
+			if rdel {
+				pr, p2, err = t.p.UpdatePageLink(pr, i-m, r)
+			} else {
+				pr, p2, err = t.p.InsertPageLink(pr, i-m, r)
+			}
 		}
 		if err != nil {
 			return err
@@ -300,14 +288,11 @@ func (t *FileTree) Out(s Stack, l, r int64) (err error) {
 			return err
 		}
 
-		lk := t.p.LastKey(l, nil)
-		rk := t.p.LastKey(r, nil)
-
-		off, _, err = t.p.InsertInt64(off, 0, lk, l)
+		off, _, err = t.p.InsertPageLink(off, 0, l)
 		if err != nil {
 			return err
 		}
-		off, _, err = t.p.InsertInt64(off, 1, rk, r)
+		off, _, err = t.p.InsertPageLink(off, 1, r)
 		if err != nil {
 			return err
 		}
@@ -316,10 +301,6 @@ func (t *FileTree) Out(s Stack, l, r int64) (err error) {
 		r = NilPage
 
 		t.depth++
-	}
-
-	if r != NilPage {
-		panic(r)
 	}
 
 	//	log.Printf("root   %4x <- %4x%v\n%v", l, t.root, callers(-1), dumpFile(t.p))

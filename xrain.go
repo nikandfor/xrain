@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"hash/crc64"
 	"log"
-	"path"
-	"runtime"
 	"strings"
 	"sync"
 )
@@ -201,13 +199,11 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 		return err
 	}
 
-	tr := d.t.Copy()
-
 	d.mu.Lock()
 	//	tlog.Printf("Update %2d %2d  %2d exit", ver, d.ver, batch)
 	if ver > d.ver {
 		d.ver = ver
-		d.tr = tr
+		d.tr = d.t.Copy()
 	}
 	d.mu.Unlock()
 
@@ -519,31 +515,4 @@ func assert0(c bool, f string, args ...interface{}) {
 	}
 
 	panic(fmt.Sprintf(f, args...))
-}
-
-func callers(skip int) string {
-	if skip < 0 {
-		return ""
-	}
-
-	var pc [100]uintptr
-	n := runtime.Callers(2+skip, pc[:])
-
-	frames := runtime.CallersFrames(pc[:n])
-
-	var buf strings.Builder
-	buf.WriteString("\n")
-
-	for {
-		f, more := frames.Next()
-		if !strings.Contains(f.File, "/xrain/") {
-			break
-		}
-		fmt.Fprintf(&buf, "    %-20s at %s:%d\n", path.Ext(f.Function)[1:], path.Base(f.File), f.Line)
-		if !more {
-			break
-		}
-	}
-
-	return buf.String()
 }
