@@ -77,15 +77,12 @@ func (l *KVLayout) suballoc(n int) int64 {
 	return 0
 }
 
-func (*KVLayout) SerializerName() string { return "KVLayout" }
-
-func (*KVLayout) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
-	l := NewFixedLayout(ctx.Back, ctx.Page, ctx.Freelist)
-	return l, 0, nil
+func (l *KVLayout) Serialize(p []byte) int {
+	return 0
 }
 
-func (*KVLayout) Serialize(p []byte) int {
-	return 0
+func (l *KVLayout) Deserialize(p []byte) (int, error) {
+	return 0, nil
 }
 
 func (l *KVLayout) Alloc(leaf bool) (int64, error) {

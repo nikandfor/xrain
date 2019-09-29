@@ -22,7 +22,7 @@ type A struct {
 
 	f *os.File
 	w *json.Writer
-	l tlog.Logger
+	l *tlog.Logger
 }
 
 func NewA() *A {
@@ -37,7 +37,7 @@ func NewA() *A {
 		stopc:  make(chan struct{}),
 		f:      f,
 		w:      w,
-		l:      tlog.NewLogger(tlog.NewJSONWriter(w)),
+		l:      tlog.New(tlog.NewJSONWriter(w)),
 	}
 	a.cond.L = &a.mu
 	return a

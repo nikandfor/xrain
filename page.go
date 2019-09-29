@@ -36,6 +36,7 @@ type (
 		Siblings(p int64, i int, pi int64) (li int, l, r int64)
 		Rebalance(l, r int64) (nl, nr int64, _ error)
 
+		SetPageSize(page int64)
 		SetVer(ver int64)
 		SetFreelist(fl Freelist)
 	}
@@ -71,6 +72,10 @@ func NewFixedLayout(b Back, page int64, fl Freelist) *FixedLayout {
 
 func (l *BaseLayout) SetVer(ver int64) {
 	l.ver = ver
+}
+
+func (l *BaseLayout) SetPageSize(page int64) {
+	l.page = page
 }
 
 func (l *BaseLayout) SetFreelist(fl Freelist) {
@@ -182,11 +187,18 @@ func (l *BaseLayout) crccalc(p []byte) {
 	binary.BigEndian.PutUint32(p, sum)
 }
 
-func (*FixedLayout) SerializerName() string { return "FixedLayout" }
+func (l *FixedLayout) Serialize(p []byte) int {
+	if p == nil {
+		return 3 * 8
+	}
+	s := 0
+	s += binary.PutUvarint(p[s:], uint64(l.k))
+	s += binary.PutUvarint(p[s:], uint64(l.v))
+	s += binary.PutUvarint(p[s:], uint64(l.pm))
+	return s
+}
 
-func (*FixedLayout) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
-	l := NewFixedLayout(ctx.Back, ctx.Page, ctx.Freelist)
-
+func (l *FixedLayout) Deserialize(p []byte) (int, error) {
 	s := 0
 	k, n := binary.Uvarint(p[s:])
 	s += n
@@ -197,15 +209,12 @@ func (*FixedLayout) Deserialize(ctx *SerializeContext, p []byte) (interface{}, i
 
 	l.SetKVSize(int(k), int(v), int(pm))
 
-	return l, s, nil
+	return s, nil
 }
 
-func (l *FixedLayout) Serialize(p []byte) int {
-	s := 0
-	s += binary.PutUvarint(p[s:], uint64(l.k))
-	s += binary.PutUvarint(p[s:], uint64(l.v))
-	s += binary.PutUvarint(p[s:], uint64(l.pm))
-	return s
+func (l *FixedLayout) SetPageSize(page int64) {
+	l.page = page
+	l.p = l.page * int64(l.pm)
 }
 
 func (l *FixedLayout) SetKVSize(k, v, pm int) {

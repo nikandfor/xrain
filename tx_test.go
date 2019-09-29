@@ -13,9 +13,7 @@ func TestTxBucket(t *testing.T) {
 
 	b := NewMemBack(0)
 
-	db, err := NewDB(b, &Config{
-		PageSize: Page,
-	})
+	db, err := New(b, Page)
 	if !assert.NoError(t, err) {
 		return
 	}

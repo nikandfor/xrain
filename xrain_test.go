@@ -37,7 +37,7 @@ type (
 )
 
 func init() {
-	tlog.DefaultLogger = tlog.NewLogger(tlog.NewConsoleWriter(os.Stderr, tlog.LdetFlags))
+	tlog.DefaultLogger = tlog.New(tlog.NewConsoleWriter(os.Stderr, tlog.LdetFlags))
 }
 
 const (
@@ -53,11 +53,7 @@ func TestXRainSmoke(t *testing.T) {
 	fl := NewFreelist2(b, NewTree(pl, 2*Page, Page), 4*Page, Page)
 	pl.SetFreelist(fl)
 
-	db, err := NewDB(b, &Config{
-		PageSize: Page,
-		Freelist: fl,
-		Tree:     NewTree(pl, 3*Page, Page),
-	})
+	db, err := NewDB(b, Page, NewTree(pl, 3*Page, Page), fl)
 	assert.NoError(t, err)
 
 	err = db.Update(func(tx *Tx) error {
@@ -65,12 +61,14 @@ func TestXRainSmoke(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	//	b.Access2(0, 0x40, Page, 0x40, func(l, r []byte) {
-	//		log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
-	//	})
-	//	log.Printf("dump root %x free %x next %x\n%v", db.last, db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+	if false {
+		l, r := b.Access2(0, 0x80, Page, 0x80)
+		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+		b.Unlock2(l, r)
+		tlog.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+	}
 
-	db, err = NewDB(b, nil)
+	db, err = NewDB(b, 0, NewTree(pl, 0, 0), fl)
 	assert.NoError(t, err)
 
 	err = db.View(func(tx *Tx) error {
@@ -107,11 +105,7 @@ func TestXRainSmokeConcurrent(t *testing.T) {
 	fl := NewFreelist2(b, NewTree(pl, 2*Page, Page), 4*Page, Page)
 	pl.SetFreelist(fl)
 
-	db, err := NewDB(b, &Config{
-		PageSize: Page,
-		Freelist: fl,
-		Tree:     NewTree(pl, 3*Page, Page),
-	})
+	db, err := NewDB(b, Page, NewTree(pl, 3*Page, Page), fl)
 	assert.NoError(t, err)
 
 	log.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
@@ -168,7 +162,7 @@ func TestXRainHeavy(t *testing.T) {
 
 	b := NewMemBack(0)
 
-	db, err := NewDB(b, &Config{PageSize: Page})
+	db, err := New(b, Page)
 	assert.NoError(t, err)
 
 	ht := &HeavyTester{

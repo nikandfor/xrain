@@ -22,6 +22,7 @@ type (
 		Root() int64
 		SetRoot(int64)
 
+		SetPageSize(page int64)
 		PageLayout() PageLayout
 		Copy() Tree
 	}
@@ -56,30 +57,12 @@ func NewTree(p PageLayout, root, page int64) *FileTree {
 	return t
 }
 
-func (*FileTree) SerializerName() string {
-	return "FileTree"
-}
-
-func (*FileTree) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
-	pl, s, err := Deserialize(ctx, p)
-	if err != nil {
-		return nil, s, err
-	}
-
-	root := int64(binary.BigEndian.Uint64(p[s:]))
-	s += 8
-	size := int64(binary.BigEndian.Uint64(p[s:]))
-	s += 8
-
-	t := NewTree(pl.(PageLayout), root&^0xff, ctx.Page)
-	t.size = int(size)
-	t.depth = int(root & 0xff)
-
-	return t, s, nil
-}
-
 func (t *FileTree) Serialize(p []byte) int {
-	s := Serialize(p, t.p)
+	s := t.p.Serialize(p)
+
+	if p == nil {
+		return s + 8
+	}
 
 	binary.BigEndian.PutUint64(p[s:], uint64(t.root)|uint64(t.depth))
 	s += 8
@@ -87,6 +70,24 @@ func (t *FileTree) Serialize(p []byte) int {
 	s += 8
 
 	return s
+}
+
+func (t *FileTree) Deserialize(p []byte) (int, error) {
+	s, err := t.p.Deserialize(p)
+	if err != nil {
+		return s, err
+	}
+
+	root := int64(binary.BigEndian.Uint64(p[s:]))
+	s += 8
+	size := int64(binary.BigEndian.Uint64(p[s:]))
+	s += 8
+
+	t.root = root &^ 0xff
+	t.size = int(size)
+	t.depth = int(root & 0xff)
+
+	return s, nil
 }
 
 func (t *FileTree) Size() int {
@@ -98,6 +99,8 @@ func (t *FileTree) Root() int64 { return t.root }
 func (t *FileTree) SetRoot(r int64) { t.root = r }
 
 func (t *FileTree) PageLayout() PageLayout { return t.p }
+
+func (t *FileTree) SetPageSize(page int64) { t.mask = page - 1; t.p.SetPageSize(page) }
 
 func (t *FileTree) Copy() Tree { cp := *t; return &cp }
 

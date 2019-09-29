@@ -42,9 +42,7 @@ type (
 		batch *Batcher
 
 		nb     NewBucketFunc
-		nosync bool
-
-		conf *Config
+		NoSync bool
 
 		page int64
 
@@ -56,33 +54,29 @@ type (
 		wmu sync.Mutex
 	}
 
-	Config struct {
-		PageSize int64
-		NoSync   bool
-
-		Freelist  Freelist
-		Tree      Tree
-		NewBucket NewBucketFunc
+	Serializer interface {
+		Serialize(p []byte) int
+		Deserialize(p []byte) (int, error)
 	}
 )
 
-func NewDB(b Back, c *Config) (*DB, error) {
+func New(b Back, page int64) (*DB, error) {
+	pl := NewFixedLayout(b, page, nil)
+	t := NewTree(pl, 2*page, page)
+	fl := NewFreelist2(b, t, 3*page, page)
+	pl.SetFreelist(fl)
+
+	return NewDB(b, page, t, fl)
+}
+
+func NewDB(b Back, page int64, t Tree, fl Freelist) (*DB, error) {
 	d := &DB{
 		b:     b,
+		fl:    fl,
+		t:     t,
+		nb:    newBucket,
+		page:  page,
 		keepl: make(map[int64]int),
-	}
-
-	if c != nil {
-		if c.PageSize != 0 {
-			if (c.PageSize-1)&c.PageSize != 0 {
-				return nil, errors.New("page size must be power of 2")
-			}
-			if c.PageSize < 0x100 {
-				return nil, errors.New("too small page size")
-			}
-			d.page = c.PageSize
-		}
-		d.conf = c
 	}
 
 	var err error
@@ -158,7 +152,7 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	d.tr = tr
 	d.mu.Unlock()
 
-	if d.nosync {
+	if d.NoSync {
 		return nil
 	}
 
@@ -228,42 +222,16 @@ func (d *DB) writeRoot(ver int64) {
 	binary.BigEndian.PutUint64(p[0x20:], uint64(ver))
 
 	s := 0x30
-	s += Serialize(p[s:], d.fl)
-	s += Serialize(p[s:], d.t)
+	s += d.fl.Serialize(p[s:])
+	s += d.t.Serialize(p[s:])
 	_ = s
 
-	sum := crc64.Checksum(p[0x18:], CRCTable)
+	binary.BigEndian.PutUint64(p[0x10:], 0)
+
+	sum := crc64.Checksum(p, CRCTable)
 	binary.BigEndian.PutUint64(p[0x10:], sum)
 
 	d.b.Unlock(p)
-}
-
-func (d *DB) initParts0() {
-	if d.conf != nil && d.conf.Freelist != nil {
-		d.fl = d.conf.Freelist
-	} else {
-		pl := NewFixedLayout(d.b, d.page, nil)
-		tr := NewTree(pl, 2*d.page, d.page)
-		d.fl = NewFreelist2(d.b, tr, 4*d.page, d.page)
-		pl.SetFreelist(d.fl)
-	}
-
-	if d.conf != nil && d.conf.Tree != nil {
-		d.t = d.conf.Tree
-		d.tr = d.t.Copy()
-	} else {
-		pl := NewFixedLayout(d.b, d.page, d.fl)
-		d.t = NewTree(pl, 3*d.page, d.page)
-		d.tr = d.t.Copy()
-	}
-}
-
-func (d *DB) initParts1() {
-	if d.conf != nil && d.conf.NewBucket != nil {
-		d.nb = d.conf.NewBucket
-	} else {
-		d.nb = NewBucketFunc(newBucket)
-	}
 }
 
 func (d *DB) initEmpty() (err error) {
@@ -271,13 +239,15 @@ func (d *DB) initEmpty() (err error) {
 		d.page = DefaultPageSize
 	}
 
+	d.fl.SetPageSize(d.page)
+	d.t.SetPageSize(d.page)
+
+	d.tr = d.t.Copy()
+
 	err = d.b.Truncate(4 * d.page)
 	if err != nil {
 		return
 	}
-
-	d.initParts0()
-	d.initParts1()
 
 	h0 := fmt.Sprintf("xrain%3s%7x\n", Version, d.page)
 	if len(h0) != 16 {
@@ -306,12 +276,19 @@ func (d *DB) initExisting() (err error) {
 		d.page = 0x100
 	}
 
-	d.initParts1()
+	var zeros [8]byte
 
 again:
 	retry := false
 	p := d.b.Access(0, 2*d.page)
-	{
+	func() {
+		page := int64(binary.BigEndian.Uint64(p[0x18:]))
+		if page != d.page {
+			d.page = page
+			retry = true
+			return
+		}
+
 		d.ver = int64(binary.BigEndian.Uint64(p[0x20:]))
 		if ver := int64(binary.BigEndian.Uint64(p[d.page+0x20:])); ver > d.ver {
 			d.ver = ver
@@ -322,45 +299,35 @@ again:
 
 		d.verp = d.ver
 
-		page := int64(binary.BigEndian.Uint64(p[0x18:]))
-		if page != d.page {
-			d.page = page
-			retry = true
-			return
-		}
-
-		esum := crc64.Checksum(p[0x18:], CRCTable)
-		sum := binary.BigEndian.Uint64(p[0x10:])
-		if sum != esum {
+		sum := crc64.Update(0, CRCTable, p[:0x10])
+		sum = crc64.Update(sum, CRCTable, zeros[:])
+		sum = crc64.Update(sum, CRCTable, p[0x18:])
+		rsum := binary.BigEndian.Uint64(p[0x10:])
+		if sum != rsum {
 			err = ErrPageChecksum
 			return
 		}
 
+		d.fl.SetPageSize(d.page)
+		d.t.SetPageSize(d.page)
+
 		// p is last root page
 		s := 0x30
-		ctx := &SerializeContext{Back: d.b, Page: d.page}
-
-		var fl interface{}
-		var ss int
-		fl, ss, err = Deserialize(ctx, p[s:])
+		ss, err := d.fl.Deserialize(p[s:])
 		if err != nil {
 			return
 		}
-		d.fl = fl.(Freelist)
-		ctx.Freelist = d.fl
 		s += ss
 
-		var tr interface{}
-		tr, ss, err = Deserialize(ctx, p[s:])
+		ss, err = d.t.Deserialize(p[s:])
 		if err != nil {
 			return
 		}
-		d.t = tr.(Tree)
+		s += ss
 		d.tr = d.t.Copy()
-		s += ss
 
 		_ = s
-	}
+	}()
 	d.b.Unlock(p)
 	if retry {
 		goto again

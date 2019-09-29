@@ -18,6 +18,7 @@ type (
 
 		Alloc(n int) (int64, error)
 		Free(n int, off, ver int64) error
+		SetPageSize(page int64)
 		SetVer(ver, keep int64)
 	}
 
@@ -64,31 +65,29 @@ func NewFreelist2(b Back, t Tree, next, page int64) *Freelist2 {
 	}
 }
 
-func (*Freelist2) SerializerName() string { return "Freelist2" }
-
-func (*Freelist2) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
-	tr, s, err := Deserialize(ctx, p)
-	if err != nil {
-		return nil, s, err
-	}
-
-	next := int64(binary.BigEndian.Uint64(p[s:]))
-	s += 8
-
-	l := NewFreelist2(ctx.Back, tr.(Tree), next, ctx.Page)
-
-	tr.(Tree).PageLayout().SetFreelist(l)
-
-	return l, s, nil
-}
-
 func (l *Freelist2) Serialize(p []byte) int {
-	s := Serialize(p, l.t)
+	s := l.t.Serialize(p)
+
+	if p == nil {
+		return s + 8
+	}
 
 	binary.BigEndian.PutUint64(p[s:], uint64(l.next))
 	s += 8
 
 	return s
+}
+
+func (l *Freelist2) Deserialize(p []byte) (int, error) {
+	s, err := l.t.Deserialize(p)
+	if err != nil {
+		return s, err
+	}
+
+	l.next = int64(binary.BigEndian.Uint64(p[s:]))
+	s += 8
+
+	return s, nil
 }
 
 func (l *Freelist2) Alloc(n int) (off int64, err error) {
@@ -280,6 +279,13 @@ func (l *Freelist2) SetVer(ver, keep int64) {
 	l.t.PageLayout().SetVer(l.ver)
 }
 
+func (l *Freelist2) SetPageSize(page int64) {
+	l.page = page
+	l.mask = page - 1
+	l.t.SetPageSize(page)
+	l.pl.SetPageSize(page)
+}
+
 func (l *Freelist2) unlock() (err error) {
 	//	log.Printf("unlock: next %x/%x last %x deff %x ver %d/%d lock %v", l.next, l.flen, l.last, l.deferred, l.ver, l.keep, l.lock)
 	if l.lock {
@@ -419,22 +425,22 @@ func NewEverGrowFreelist(b Back, page, next int64) *GrowFreelist {
 	return l
 }
 
-func (*GrowFreelist) SerializerName() string {
-	return "GrowFreelist"
-}
-
-func (*GrowFreelist) Deserialize(ctx *SerializeContext, p []byte) (interface{}, int, error) {
-	next := int64(binary.BigEndian.Uint64(p))
-	l := NewEverGrowFreelist(ctx.Back, ctx.Page, next)
-	return l, 8, nil
-}
-
 func (l *GrowFreelist) Serialize(p []byte) int {
+	if p == nil {
+		return 8
+	}
 	binary.BigEndian.PutUint64(p, uint64(l.next))
 	return 8
 }
 
+func (l *GrowFreelist) Deserialize(p []byte) (int, error) {
+	l.next = int64(binary.BigEndian.Uint64(p))
+	return 8, nil
+}
+
 func (l *GrowFreelist) SetVer(ver, keep int64) {}
+
+func (l *GrowFreelist) SetPageSize(page int64) { l.page = page }
 
 func (l *GrowFreelist) Alloc(n int) (off int64, err error) {
 	off = l.next

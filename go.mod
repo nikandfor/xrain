@@ -7,3 +7,7 @@ require (
 	github.com/nikandfor/tlog v0.0.0-20190704163755-7886d7dbb149
 	github.com/stretchr/testify v1.3.0
 )
+
+replace github.com/nikandfor/tlog => ../tlog
+
+replace github.com/nikandfor/json => ../json
