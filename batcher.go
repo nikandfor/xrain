@@ -75,7 +75,7 @@ func (b *Batcher) Lock() int {
 }
 
 func (b *Batcher) Wait(bt int) error {
-	for bt >= b.batch { // wait for batch to full
+	for b.batch <= bt && b.err == nil { // wait for batch to full
 		b.cond.Wait()
 	}
 

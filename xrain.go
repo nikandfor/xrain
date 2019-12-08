@@ -20,8 +20,7 @@ var (
 )
 
 var (
-	ErrPageChecksum        = errors.New("page checksum mismatch")
-	ErrBucketAlreadyExists = errors.New("bucket already exists")
+	ErrPageChecksum = errors.New("page checksum mismatch")
 )
 
 /*
@@ -41,7 +40,6 @@ type (
 		t, tr Tree
 		batch *Batcher
 
-		nb     NewBucketFunc
 		NoSync bool
 
 		page int64
@@ -50,6 +48,8 @@ type (
 		ver, verp int64
 		keep      int64
 		keepl     map[int64]int
+
+		safe, write int64
 
 		wmu sync.Mutex
 	}
@@ -60,23 +60,26 @@ type (
 	}
 )
 
-func New(b Back, page int64) (*DB, error) {
-	pl := NewFixedLayout(b, page, nil)
-	t := NewTree(pl, 2*page, page)
+func NewDB(b Back, page int64, pl PageLayout) (*DB, error) {
+	if pl == nil {
+		pl = NewFixedLayout(b, page, nil)
+	} else {
+		pl.SetPageSize(page)
+	}
 
-	flt := NewTree(pl, 3*page, page)
-	fl := NewFreelist2(b, flt, 4*page, page)
+	t := NewTree(pl, 4*page, page)
+
+	fpl := NewFixedLayout(b, page, nil)
+	flt := NewTree(fpl, 5*page, page)
+	fl := NewFreelist2(b, flt, 6*page, page)
+
 	pl.SetFreelist(fl)
+	fpl.SetFreelist(fl)
 
-	return NewDB(b, page, t, fl)
-}
-
-func NewDB(b Back, page int64, t Tree, fl Freelist) (*DB, error) {
 	d := &DB{
 		b:     b,
 		fl:    fl,
 		t:     t,
-		nb:    newBucket,
 		page:  page,
 		keepl: make(map[int64]int),
 	}
@@ -91,7 +94,9 @@ func NewDB(b Back, page int64, t Tree, fl Freelist) (*DB, error) {
 		return nil, err
 	}
 
-	d.batch = NewBatcher(&d.wmu, b.Sync)
+	d.tr = d.t.Copy()
+
+	d.batch = NewBatcher(&d.wmu, d.sync)
 	go d.batch.Run()
 
 	return d, nil
@@ -122,7 +127,11 @@ func (d *DB) View(f func(tx *Tx) error) error {
 }
 
 func (d *DB) Update(f func(tx *Tx) error) error {
-	return d.update1(f)
+	if d.NoSync {
+		return d.update0(f)
+	} else {
+		return d.update1(f)
+	}
 }
 
 func (d *DB) update0(f func(tx *Tx) error) (err error) {
@@ -132,6 +141,7 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	d.mu.Lock()
 	d.updateKeep()
 	ver, keep := d.ver, d.keep
+	write := d.write
 	d.mu.Unlock()
 	ver++
 
@@ -145,13 +155,15 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 		return err
 	}
 
-	d.writeRoot(ver)
+	d.writeRoot(write)
 
 	tr := d.t.Copy()
 
 	d.mu.Lock()
 	d.ver++
 	d.tr = tr
+	d.write++
+	d.safe++
 	d.mu.Unlock()
 
 	if d.NoSync {
@@ -188,6 +200,7 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 
 	//	tlog.Printf("Update %2d %2d  %2d\n%v", ver, keep, batch, dumpFile(d.t.PageLayout()))
 
+	// TODO: keep safe page in case of batch failure
 	d.writeRoot(ver)
 
 	err = d.batch.Wait(batch)
@@ -206,6 +219,23 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	return nil
 }
 
+func (d *DB) sync() error {
+	d.mu.Lock()
+	d.write++
+	d.mu.Unlock()
+
+	err := d.b.Sync()
+	if err != nil {
+		return err
+	}
+
+	d.mu.Lock()
+	d.safe++
+	d.mu.Unlock()
+
+	return nil
+}
+
 func (d *DB) updateKeep() {
 	min := d.ver
 	for k := range d.keepl {
@@ -217,7 +247,7 @@ func (d *DB) updateKeep() {
 }
 
 func (d *DB) writeRoot(ver int64) {
-	n := ver % 2
+	n := ver & 0x3
 
 	p := d.b.Access(n*d.page, d.page)
 
@@ -244,9 +274,7 @@ func (d *DB) initEmpty() (err error) {
 	d.fl.SetPageSize(d.page)
 	d.t.SetPageSize(d.page)
 
-	d.tr = d.t.Copy()
-
-	err = d.b.Truncate(4 * d.page)
+	err = d.b.Truncate(6 * d.page)
 	if err != nil {
 		return
 	}
@@ -256,12 +284,13 @@ func (d *DB) initEmpty() (err error) {
 		panic(len(h0))
 	}
 
-	p := d.b.Access(0, 2*d.page)
+	p := d.b.Access(0, 4*d.page)
 
-	copy(p, h0)
-	copy(p[d.page:], h0)
+	for i := 0; i < 4; i++ {
+		off := int64(i) * d.page
 
-	for _, off := range []int64{0, d.page} {
+		copy(p[off:], h0)
+
 		s := off + 0x18
 		binary.BigEndian.PutUint64(p[s:], uint64(d.page))
 	}
@@ -282,7 +311,7 @@ func (d *DB) initExisting() (err error) {
 
 again:
 	retry := false
-	p := d.b.Access(0, 2*d.page)
+	p := d.b.Access(0, 4*d.page)
 	func() {
 		page := int64(binary.BigEndian.Uint64(p[0x18:]))
 		if page != d.page {
@@ -291,13 +320,19 @@ again:
 			return
 		}
 
-		d.ver = int64(binary.BigEndian.Uint64(p[0x20:]))
-		if ver := int64(binary.BigEndian.Uint64(p[d.page+0x20:])); ver > d.ver {
-			d.ver = ver
-			p = p[d.page:]
-		} else {
-			p = p[:d.page]
+		d.ver = 0
+		var latest int64
+		for i := 0; i < 4; i++ {
+			off := int64(i) * d.page
+			ver := int64(binary.BigEndian.Uint64(p[off+0x20:]))
+			if ver > d.ver {
+				latest = off
+				d.ver = ver
+				d.safe = int64(i)
+				d.write = d.safe + 1
+			}
 		}
+		p = p[latest : latest+d.page]
 
 		d.verp = d.ver
 
@@ -326,9 +361,6 @@ again:
 			return
 		}
 		s += ss
-		d.tr = d.t.Copy()
-
-		_ = s
 	}()
 	d.b.Unlock(p)
 	if retry {
@@ -371,7 +403,7 @@ func checkFile(l PageLayout) {
 
 	_ = b.Sync()
 	sz := b.Size()
-	for off := int64(0); off < sz; off += page {
+	for off := 4 * page; off < sz; off += page {
 		checkPage(l, off)
 	}
 }
@@ -465,7 +497,7 @@ func dumpFile(l PageLayout) string {
 	if sz > 0 {
 		p := b.Access(0, 0x10)
 		if bytes.HasPrefix(p, []byte("xrain")) {
-			off = 2 * page
+			off = 4 * page
 		}
 		b.Unlock(p)
 	}

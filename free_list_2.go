@@ -18,6 +18,7 @@ type (
 
 		Alloc(n int) (int64, error)
 		Free(n int, off, ver int64) error
+
 		SetPageSize(page int64)
 		SetVer(ver, keep int64)
 	}

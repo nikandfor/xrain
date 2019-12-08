@@ -81,7 +81,7 @@ func TestFreelist2AllowGrow1(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(8*Page), off, "%x != %x", 8*Page, off)
 
-	//	log.Printf("dump:\n%v", dumpFile(pl))
+	//	tlog.Printf("dump:\n%v", dumpFile(pl))
 }
 
 func TestFreelist2AllowGrow2(t *testing.T) {
@@ -139,7 +139,7 @@ func TestFreelist2AllocPow(t *testing.T) {
 	assert.Equal(t, int64(4*Page), off, "%x != %x", 4*Page, off)
 
 	dump, psz := dumpPage(pl, tr.root)
-	log.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
+	tlog.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
 
 	off, err = fl.Alloc(4)
 	assert.NoError(t, err)
@@ -161,7 +161,7 @@ func TestFreelist2AllocPow(t *testing.T) {
 
 	if t.Failed() {
 		dump, psz = dumpPage(pl, tr.root)
-		log.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
+		tlog.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
 	}
 }
 
@@ -199,7 +199,7 @@ func TestFreelist2Alloc2(t *testing.T) {
 	assert.Equal(t, int64(6*Page), off, "%x != %x", 6*Page, off)
 
 	dump, psz := dumpPage(pl, tr.root)
-	log.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
+	tlog.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
 }
 
 func TestFreelist2Auto(t *testing.T) {
@@ -292,11 +292,11 @@ func TestFreelist2Auto(t *testing.T) {
 		}
 
 		if pr {
-			log.Printf("in use: %x", alloc)
-			log.Printf("dump root %x next %x  ver %x %x", tr.root, fl.next, fl.ver, fl.keep)
-			log.Printf("%s <- %x = %x * %x", pages, fl.next, fl.next/Page, Page)
-			log.Printf("%s", sizes)
-			//	log.Printf("%v", dumpFile(pl))
+			tlog.Printf("in use: %x", alloc)
+			tlog.Printf("dump root %x next %x  ver %x %x", tr.root, fl.next, fl.ver, fl.keep)
+			tlog.Printf("pages %s <- %x = %x * %x", pages, fl.next, fl.next/Page, Page)
+			tlog.Printf("sizes %s", sizes)
+			//	tlog.Printf("%v", dumpFile(pl))
 		}
 
 		frac := float64(free) / float64(fl.next/Page)
