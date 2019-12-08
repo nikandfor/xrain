@@ -13,7 +13,7 @@ func TestTxBucket(t *testing.T) {
 
 	b := NewMemBack(0)
 
-	db, err := New(b, Page)
+	db, err := NewDB(b, Page, nil)
 	if !assert.NoError(t, err) {
 		return
 	}
