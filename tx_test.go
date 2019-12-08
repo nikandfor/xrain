@@ -2,9 +2,9 @@ package xrain
 
 import (
 	"encoding/hex"
-	"log"
 	"testing"
 
+	"github.com/nikandfor/tlog"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -39,6 +39,8 @@ func TestTxBucket(t *testing.T) {
 		return nil
 	})
 	assert.NoError(t, err)
+
+	tlog.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.ver, db.keep, db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(db.t.PageLayout()))
 
 	err = db.Update(func(tx *Tx) error {
 		b0 := tx.Bucket([]byte("bucket00"))
@@ -90,7 +92,7 @@ func TestTxBucket(t *testing.T) {
 	assert.NoError(t, err)
 
 	l, r := b.Access2(0, 0x40, Page, 0x40)
-	log.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+	tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 	b.Unlock2(l, r)
-	log.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.ver, db.keep, db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(db.t.PageLayout()))
+	tlog.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.ver, db.keep, db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(db.t.PageLayout()))
 }

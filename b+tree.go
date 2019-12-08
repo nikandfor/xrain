@@ -10,9 +10,9 @@ type (
 
 		Size() int
 
-		Get(k []byte) []byte
+		Get(k []byte) ([]byte, int)
 
-		Put(k, v []byte) (old []byte, err error)
+		Put(k, v []byte, F int) (old []byte, err error)
 		Del(k []byte) (old []byte, err error)
 
 		Seek(st Stack, k []byte) (_ Stack, eq bool)
@@ -104,7 +104,7 @@ func (t *FileTree) SetPageSize(page int64) { t.mask = page - 1; t.p.SetPageSize(
 
 func (t *FileTree) Copy() Tree { cp := *t; return &cp }
 
-func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
+func (t *FileTree) Put(k, v []byte, F int) (old []byte, err error) {
 	st, eq := t.Seek(nil, k)
 
 	//	log.Printf("root %x Put %x -> %x", t.root, k, v)
@@ -120,7 +120,7 @@ func (t *FileTree) Put(k, v []byte) (old []byte, err error) {
 		}
 	}
 
-	l, r, err := t.p.Insert(off, i, k, v)
+	l, r, err := t.p.Insert(off, i, F, k, v)
 	if err != nil {
 		return
 	}
@@ -158,16 +158,18 @@ func (t *FileTree) Del(k []byte) (old []byte, err error) {
 	return
 }
 
-func (t *FileTree) Get(k []byte) (v []byte) {
+func (t *FileTree) Get(k []byte) (v []byte, F int) {
 	st, eq := t.Seek(nil, k)
 
 	if !eq {
-		return nil
+		return nil, 0
 	}
 
 	off, i := st.OffIndex(t.mask)
 
-	return t.p.Value(off, i, nil)
+	_, F = t.p.Key(off, i, nil)
+
+	return t.p.Value(off, i, nil), F
 }
 
 func (t *FileTree) Seek(st Stack, k []byte) (_ Stack, eq bool) {

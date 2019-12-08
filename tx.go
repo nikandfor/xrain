@@ -69,11 +69,15 @@ func newBucket(tx *Tx, t Tree) Bucket {
 }
 
 func (b *SimpleBucket) Put(k, v []byte) error {
+	return b.put(k, v, 0)
+}
+
+func (b *SimpleBucket) put(k, v []byte, F int) error {
 	if !b.allowed(true) {
 		panic("not allowed")
 	}
 
-	_, err := b.t.Put(k, v)
+	_, err := b.t.Put(k, v, F)
 	if err != nil {
 		return err
 	}
@@ -86,7 +90,13 @@ func (b *SimpleBucket) Get(k []byte) []byte {
 		panic("not allowed")
 	}
 
-	return b.t.Get(k)
+	v, F := b.t.Get(k)
+
+	if F != 0 {
+		return nil
+	}
+
+	return v
 }
 
 func (b *SimpleBucket) Del(k []byte) error {
@@ -114,8 +124,8 @@ func (b *SimpleBucket) Bucket(k []byte) Bucket {
 		}
 	}
 
-	v := b.t.Get(k)
-	if v == nil {
+	v, F := b.t.Get(k)
+	if v == nil || F == 0 && b.pl.Supports(Flags) {
 		return nil
 	}
 
@@ -152,7 +162,7 @@ func (b *SimpleBucket) PutBucket(k []byte) (Bucket, error) {
 		}
 	}
 
-	v := b.t.Get(k)
+	v, _ := b.t.Get(k)
 	if v != nil {
 		return nil, ErrBucketAlreadyExists
 	}
@@ -168,7 +178,7 @@ func (b *SimpleBucket) PutBucket(k []byte) (Bucket, error) {
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(off))
 
-	_, err = b.t.Put(k, buf[:])
+	_, err = b.t.Put(k, buf[:], 1)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +214,7 @@ func (b *SimpleBucket) DelBucket(k []byte) error {
 		}
 	}
 
-	v := b.t.Get(k)
+	v, _ := b.t.Get(k)
 	if v == nil {
 		return nil
 	}
@@ -240,7 +250,7 @@ func (b *SimpleBucket) propagate() error {
 
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(root))
-	err := b.par.Put([]byte(b.name), buf[:])
+	err := b.par.put([]byte(b.name), buf[:], 1)
 	if err != nil {
 		return err
 	}

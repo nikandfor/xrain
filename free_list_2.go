@@ -129,7 +129,7 @@ next:
 		return l.allocGrow(n)
 	}
 	off, i := st.OffIndex(l.mask)
-	last := l.pl.Key(off, i, nil)
+	last, _ := l.pl.Key(off, i, nil)
 
 	off = int64(binary.BigEndian.Uint64(last))
 
@@ -147,7 +147,7 @@ next:
 	key := make([]byte, len(last))
 	copy(key, last)
 
-	vbytes := l.t.Get(key)
+	vbytes, _ := l.t.Get(key)
 	ver := int64(binary.BigEndian.Uint64(vbytes))
 	if ver >= l.keep && ver != l.ver {
 		goto next
@@ -248,7 +248,7 @@ more:
 		goto more
 	}
 
-	if vbytes := l.t.Get(buf[:8]); vbytes != nil {
+	if vbytes, _ := l.t.Get(buf[:8]); vbytes != nil {
 		v := int64(binary.BigEndian.Uint64(vbytes))
 		//	log.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), l.deferred)
 		l.deferOp(sib|int64(sz), 0)
@@ -306,7 +306,7 @@ func (l *Freelist2) unlock() (err error) {
 			_, err = l.t.Del(buf[:8])
 		} else {
 			binary.BigEndian.PutUint64(buf[8:], uint64(kv.v))
-			_, err = l.t.Put(buf[:8], buf[8:])
+			_, err = l.t.Put(buf[:8], buf[8:], 0)
 		}
 		if err != nil {
 			return
@@ -333,7 +333,7 @@ func (l *Freelist2) shrinkFile() (err error) {
 			break
 		}
 		off, i := st.OffIndex(l.mask)
-		last := l.pl.Key(off, i, nil)
+		last, _ := l.pl.Key(off, i, nil)
 
 		bst := int64(binary.BigEndian.Uint64(last))
 		bend := bst&^l.mask + l.page<<uint(bst&l.mask)
@@ -344,7 +344,7 @@ func (l *Freelist2) shrinkFile() (err error) {
 			break
 		}
 
-		vbytes := l.t.Get(last)
+		vbytes, _ := l.t.Get(last)
 		ver := int64(binary.BigEndian.Uint64(vbytes))
 		if ver >= l.keep && ver != l.ver {
 			break

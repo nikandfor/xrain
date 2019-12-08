@@ -79,9 +79,9 @@ func TestPageKVPageInsert(t *testing.T) {
 
 	assert.Equal(t, 0, pl.nkeys(p))
 
-	pl.pageInsert(p, 0, 0, []byte("key2"), []byte("value2"))
-	pl.pageInsert(p, 0, 1, []byte("key1"), []byte("value1"))
-	pl.pageInsert(p, 2, 2, []byte("key3"), []byte("value3"))
+	pl.pageInsert(p, 0, 0, 0, []byte("key2"), []byte("value2"))
+	pl.pageInsert(p, 0, 1, 0, []byte("key1"), []byte("value1"))
+	pl.pageInsert(p, 2, 2, 0, []byte("key3"), []byte("value3"))
 
 	t.Logf("page %x\n%v", 0, hex.Dump(p))
 
@@ -116,22 +116,22 @@ func TestPageKVPutOnePageAlloc8(t *testing.T) {
 }
 
 func TestPageKVPutSplit8(t *testing.T) {
-	const Page = 0x40
+	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
 	pl := NewKVLayout(b, Page, NewEverGrowFreelist(b, Page, 0))
 
-	testPagePutSplit8(t, pl, 0xc)
+	testPagePutSplit8(t, pl, 0x20)
 }
 
 func TestPageKVPutSplitAlloc8(t *testing.T) {
-	const Page = 0x40
+	const Page = 0x80
 
 	b := NewMemBack(2 * Page)
 	pl := NewKVLayout(b, Page, NewEverGrowFreelist(b, Page, 0))
 	pl.SetVer(1)
 
-	testPagePutSplit8(t, pl, 0xc)
+	testPagePutSplit8(t, pl, 0x20)
 }
 
 func TestPageKVKeyCmpLast8(t *testing.T) {
@@ -185,12 +185,12 @@ func TestPageKVNeedRebalance8(t *testing.T) {
 
 	off := int64(0)
 
-	off, _, _ = pl.Insert(off, 0, []byte("key_aaaa"), []byte("value_aa"))
+	off, _, _ = pl.Insert(off, 0, 0, []byte("key_aaaa"), []byte("value_aa"))
 	assert.Equal(t, true, pl.NeedRebalance(off))
 
-	off, _, _ = pl.Insert(off, 1, []byte("key_aaaa"), []byte("value_aa"))
-	off, _, _ = pl.Insert(off, 2, []byte("key_aaaa"), []byte("value_aa"))
-	off, _, _ = pl.Insert(off, 3, []byte("key_aaaa"), []byte("value_aa"))
+	off, _, _ = pl.Insert(off, 1, 0, []byte("key_aaaa"), []byte("value_aa"))
+	off, _, _ = pl.Insert(off, 2, 0, []byte("key_aaaa"), []byte("value_aa"))
+	off, _, _ = pl.Insert(off, 3, 0, []byte("key_aaaa"), []byte("value_aa"))
 
 	assert.Equal(t, false, pl.NeedRebalance(off))
 }
@@ -203,9 +203,9 @@ func TestPageKVSiblings8(t *testing.T) {
 
 	off := int64(0)
 
-	off, _, _ = pl.InsertInt64(off, 0, []byte("key_aaaa"), 10)
-	off, _, _ = pl.InsertInt64(off, 1, []byte("key_bbbb"), 20)
-	off, _, _ = pl.InsertInt64(off, 2, []byte("key_cccc"), 30)
+	off, _, _ = pl.Insert(off, 0, 0, []byte("key_aaaa"), intval(10))
+	off, _, _ = pl.Insert(off, 1, 0, []byte("key_bbbb"), intval(20))
+	off, _, _ = pl.Insert(off, 2, 0, []byte("key_cccc"), intval(30))
 
 	li, loff, roff := pl.Siblings(off, 0, 40)
 	assert.EqualValues(t, 0, li)

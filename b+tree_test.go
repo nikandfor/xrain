@@ -15,22 +15,22 @@ func TestTreeSmall(t *testing.T) {
 	pl := NewFixedLayout(b, Page, fl)
 	tr := NewTree(pl, 0, Page)
 
-	v, err := tr.Put([]byte("key_aaaa"), []byte("value_aa"))
+	v, err := tr.Put([]byte("key_aaaa"), []byte("value_aa"), 0)
 	assert.NoError(t, err)
 	assert.Nil(t, v)
 
 	assert.Equal(t, 1, tr.Size())
 
-	v = tr.Get([]byte("key_aaaa"))
+	v, _ = tr.Get([]byte("key_aaaa"))
 	assert.EqualValues(t, "value_aa", v)
 
-	v, err = tr.Put([]byte("key_aaaa"), []byte("value_22"))
+	v, err = tr.Put([]byte("key_aaaa"), []byte("value_22"), 0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, []byte("value_aa"), v)
 
 	assert.Equal(t, 1, tr.Size())
 
-	v = tr.Get([]byte("key_aaaa"))
+	v, _ = tr.Get([]byte("key_aaaa"))
 	assert.EqualValues(t, "value_22", v)
 
 	v, err = tr.Del([]byte("some_key"))
@@ -45,7 +45,7 @@ func TestTreeSmall(t *testing.T) {
 
 	assert.Equal(t, 0, tr.Size())
 
-	v = tr.Get([]byte("key_aaaa"))
+	v, _ = tr.Get([]byte("key_aaaa"))
 	assert.Nil(t, v)
 
 	assert.EqualValues(t, 0, tr.depth)
@@ -70,7 +70,7 @@ func TestTreeIterator(t *testing.T) {
 		q := ((i + 1) * Prime) % N
 		k := fmt.Sprintf("key_%04x", q)
 		v := fmt.Sprintf("value_%02x", q)
-		_, err := tr.Put([]byte(k), []byte(v))
+		_, err := tr.Put([]byte(k), []byte(v), 0)
 		assert.NoError(t, err)
 	}
 
@@ -80,7 +80,7 @@ func TestTreeIterator(t *testing.T) {
 
 		ek := fmt.Sprintf("key_%04x", q)
 		ev := fmt.Sprintf("value_%02x", q)
-		k := pl.Key(off, i, nil)
+		k, _ := pl.Key(off, i, nil)
 		v := pl.Value(off, i, nil)
 
 		assert.Equal(t, []byte(ek), k)
@@ -98,7 +98,7 @@ func TestTreeIterator(t *testing.T) {
 
 		ek := fmt.Sprintf("key_%04x", q)
 		ev := fmt.Sprintf("value_%02x", q)
-		k := pl.Key(off, i, nil)
+		k, _ := pl.Key(off, i, nil)
 		v := pl.Value(off, i, nil)
 
 		assert.EqualValues(t, ek, k)
@@ -125,10 +125,10 @@ func TestTreeBig(t *testing.T) {
 		k := fmt.Sprintf("key_%04x", q)
 		v := fmt.Sprintf("value_%02x", q)
 
-		have := tr.Get([]byte(k))
+		have, _ := tr.Get([]byte(k))
 		n := tr.Size()
 
-		_, err := tr.Put([]byte(k), []byte(v))
+		_, err := tr.Put([]byte(k), []byte(v), 0)
 		assert.NoError(t, err)
 
 		if have != nil {
@@ -144,8 +144,8 @@ func TestTreeBig(t *testing.T) {
 
 		ek := fmt.Sprintf("key_%04x", q)
 		ev := fmt.Sprintf("value_%02x", q)
-		k := pl.Key(off, i, nil)
-		v := tr.Get(k)
+		k, _ := pl.Key(off, i, nil)
+		v, _ := tr.Get(k)
 
 		assert.EqualValues(t, ek, k)
 		assert.EqualValues(t, ev, v)
@@ -161,8 +161,8 @@ func TestTreeBig(t *testing.T) {
 
 		ek := fmt.Sprintf("key_%04x", q)
 		ev := fmt.Sprintf("value_%02x", q)
-		k := pl.Key(off, i, nil)
-		v := tr.Get(k)
+		k, _ := pl.Key(off, i, nil)
+		v, _ := tr.Get(k)
 
 		assert.EqualValues(t, ek, k)
 		assert.EqualValues(t, ev, v)
@@ -174,11 +174,11 @@ func TestTreeBig(t *testing.T) {
 		k := fmt.Sprintf("key_%04x", q)
 		v := fmt.Sprintf("value_%02x", q)
 
-		have := tr.Get([]byte(k))
+		have, _ := tr.Get([]byte(k))
 		n := tr.Size()
 
 		if (i+1)*Prime%3 == 0 {
-			_, err := tr.Put([]byte(k), []byte(v))
+			_, err := tr.Put([]byte(k), []byte(v), 0)
 			assert.NoError(t, err)
 
 			if have != nil {
@@ -201,7 +201,7 @@ func TestTreeBig(t *testing.T) {
 	for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
 		off, i := st.OffIndex(0x7f)
 
-		k := pl.Key(off, i, nil)
+		k, _ := pl.Key(off, i, nil)
 		_, err := tr.Del(k)
 
 		assert.NoError(t, err)
@@ -234,9 +234,9 @@ func buildBenchBigTree(b *testing.B) Tree {
 		k := fmt.Sprintf("key%05x", q)
 		v := fmt.Sprintf("val%05x", q)
 
-		tr.Get([]byte(k))
+		_, _ = tr.Get([]byte(k))
 
-		_, err := tr.Put([]byte(k), []byte(v))
+		_, err := tr.Put([]byte(k), []byte(v), 0)
 		assert.NoError(b, err)
 	}
 
@@ -255,7 +255,7 @@ func BenchmarkTreeIterator(b *testing.B) {
 	for j := 0; j < b.N; j++ {
 		for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
 			off, i := st.OffIndex(0x7f)
-			_ = pl.Key(off, i, nil)
+			_, _ = pl.Key(off, i, nil)
 			_ = pl.Value(off, i, nil)
 		}
 	}

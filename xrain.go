@@ -63,7 +63,9 @@ type (
 func New(b Back, page int64) (*DB, error) {
 	pl := NewFixedLayout(b, page, nil)
 	t := NewTree(pl, 2*page, page)
-	fl := NewFreelist2(b, t, 3*page, page)
+
+	flt := NewTree(pl, 3*page, page)
+	fl := NewFreelist2(b, flt, 4*page, page)
 	pl.SetFreelist(fl)
 
 	return NewDB(b, page, t, fl)
@@ -342,7 +344,7 @@ func checkPage(l PageLayout, off int64) {
 	n := l.NKeys(off)
 	var prev []byte
 	for i := 0; i < n; i++ {
-		k := l.Key(off, i, nil)
+		k, _ := l.Key(off, i, nil)
 		if bytes.Compare(prev, k) != -1 {
 			log.Fatalf("at page %x of size %d  %2x goes before %2x", off, n, prev, k)
 		}
@@ -419,20 +421,20 @@ func dumpPage(l PageLayout, off int64) (string, int64) {
 	b.Unlock(p)
 	if fl != nil {
 		for i := 0; i < n; i++ {
-			k := l.Key(off, i, nil)
+			k, _ := l.Key(off, i, nil)
 			v := l.Int64(off, i)
 			fmt.Fprintf(&buf, "    %2x -> %4x\n", k, v)
 		}
 	} else {
 		if l.IsLeaf(off) {
 			for i := 0; i < n; i++ {
-				k := l.Key(off, i, nil)
+				k, F := l.Key(off, i, nil)
 				v := l.Value(off, i, nil)
-				fmt.Fprintf(&buf, "    %q -> %q\n", k, v)
+				fmt.Fprintf(&buf, "    %q %x -> %q\n", k, F, v)
 			}
 		} else {
 			for i := 0; i < n; i++ {
-				k := l.Key(off, i, nil)
+				k, _ := l.Key(off, i, nil)
 				v := l.Int64(off, i)
 				fmt.Fprintf(&buf, "    %2x | %q -> %4x | %q\n", k, k, v, v)
 			}

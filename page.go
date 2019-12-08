@@ -9,9 +9,15 @@ import (
 
 const NilPage = -1
 
+const (
+	Flags = 1 << iota
+)
+
 type (
 	PageLayout interface {
 		Serializer
+
+		Supports(f int) bool
 
 		Alloc(leaf bool) (int64, error)
 		Free(p int64, recursive bool) error
@@ -21,12 +27,12 @@ type (
 		SetLeaf(p int64, y bool)
 
 		Search(p int64, k []byte) (i int, eq bool)
-		Key(p int64, i int, buf []byte) []byte
+		Key(p int64, i int, buf []byte) ([]byte, int)
 
 		Value(p int64, i int, buf []byte) []byte
 		Int64(p int64, i int) int64
 
-		Insert(p int64, i int, k, v []byte) (loff, roff int64, _ error)
+		Insert(p int64, i, F int, k, v []byte) (loff, roff int64, _ error)
 		Delete(p int64, i int) (int64, error)
 
 		UpdatePageLink(p int64, i int, c int64) (loff, roff int64, _ error)
@@ -69,6 +75,8 @@ func NewFixedLayout(b Back, page int64, fl Freelist) *FixedLayout {
 		p:  page,
 	}
 }
+
+func (l *BaseLayout) Supports(f int) bool { return false }
 
 func (l *BaseLayout) SetVer(ver int64) {
 	l.ver = ver
@@ -304,7 +312,7 @@ func (l *FixedLayout) Search(off int64, k []byte) (i int, eq bool) {
 	return
 }
 
-func (l *FixedLayout) Key(off int64, i int, buf []byte) (r []byte) {
+func (l *FixedLayout) Key(off int64, i int, buf []byte) (r []byte, F int) {
 	if cap(buf) >= l.k {
 		r = buf[:l.k]
 	} else {
@@ -428,7 +436,7 @@ func (l *FixedLayout) UpdatePageLink(off int64, i int, cp int64) (loff, roff int
 
 	binary.BigEndian.PutUint64(lk[l.k:], uint64(cp))
 
-	return l.Insert(off, i, lk[:l.k], lk[l.k:])
+	return l.Insert(off, i, 0, lk[:l.k], lk[l.k:])
 }
 
 func (l *FixedLayout) InsertPageLink(off int64, i int, cp int64) (loff, roff int64, err error) {
@@ -448,10 +456,10 @@ func (l *FixedLayout) InsertPageLink(off int64, i int, cp int64) (loff, roff int
 
 	binary.BigEndian.PutUint64(lk[l.k:], uint64(cp))
 
-	return l.Insert(off, i, lk[:l.k], lk[l.k:])
+	return l.Insert(off, i, 0, lk[:l.k], lk[l.k:])
 }
 
-func (l *FixedLayout) Insert(off int64, i int, k, v []byte) (loff, roff int64, err error) {
+func (l *FixedLayout) Insert(off int64, i, F int, k, v []byte) (loff, roff int64, err error) {
 	if len(k) != l.k {
 		panic(len(k))
 	}
