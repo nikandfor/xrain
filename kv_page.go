@@ -9,22 +9,24 @@ import (
 /*
 	Key Value Pair
 
-	Total len of struct must not exceed 254 bytes (254 = (0x1000 - header_size) / 0x10).
+	Total len of the struct must not exceed ((page_size - header_size) / 0x10) bytes.
 
 	// index
 	offset int16
 
 	// data
 	flags  byte
-	keylen byte // maxKeyLen+1 means prefix
+	keylen byte // maxKeyLen-0xff means prefix, 0xff means keylen at overflow page
 	key    []byte
 	value  []byte
+
 
 */
 
 type (
 	KVLayout struct { // base [16]byte, freelist int64, links [size]int16, data []{F, keylen byte, key, value []byte}
 		BaseLayout
+		maxkey int
 	}
 )
 
@@ -159,7 +161,6 @@ func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 	p := pp
 
 	ln := l.nkeys(p)
-	maxkey := 0x100
 
 	keycmp := func(i int) int {
 		dst := l.dataoff(p, i)
@@ -167,38 +168,9 @@ func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 		kl := int(p[dst+1])
 		dst += 2
 
-		if kl <= maxkey {
-			ik := p[dst : dst+kl]
-
-			return bytes.Compare(ik, k)
-		}
-
-		kl--
-
 		ik := p[dst : dst+kl]
-		kk := k
-		if len(kk) > len(ik) {
-			kk = kk[:len(ik)]
-		}
-		cmp := bytes.Compare(ik, k)
 
-		if cmp != 0 {
-			return cmp
-		}
-
-		if len(k) == len(kk) {
-			return -1
-		}
-
-		if pp != nil {
-			p := make([]byte, len(pp))
-			copy(p, pp)
-			l.b.Unlock(pp)
-			pp = nil
-		}
-
-		// check full keys
-		panic("not implemented")
+		return bytes.Compare(ik, k)
 	}
 
 	i = sort.Search(ln, func(i int) bool {

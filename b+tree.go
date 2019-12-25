@@ -22,8 +22,10 @@ type (
 		Root() int64
 		SetRoot(int64)
 
-		SetPageSize(page int64)
 		PageLayout() PageLayout
+		SetPageLayout(PageLayout)
+
+		SetPageSize(page int64)
 		Copy() Tree
 	}
 
@@ -99,6 +101,8 @@ func (t *FileTree) Root() int64 { return t.root }
 func (t *FileTree) SetRoot(r int64) { t.root = r }
 
 func (t *FileTree) PageLayout() PageLayout { return t.p }
+
+func (t *FileTree) SetPageLayout(pl PageLayout) { t.p = pl }
 
 func (t *FileTree) SetPageSize(page int64) { t.mask = page - 1; t.p.SetPageSize(page) }
 

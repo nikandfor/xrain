@@ -94,7 +94,7 @@ func NewDB(b Back, page int64, pl PageLayout) (*DB, error) {
 		return nil, err
 	}
 
-	d.tr = d.t.Copy()
+	d.tr = NewTree(pl, d.t.Root(), d.page)
 
 	d.batch = NewBatcher(&d.wmu, d.sync)
 	go d.batch.Run()

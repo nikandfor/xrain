@@ -1,7 +1,6 @@
 package xrain
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 )
@@ -15,7 +14,7 @@ type (
 
 	Bucket struct {
 		tx          *Tx
-		name        string
+		name        []byte
 		par         *Bucket
 		t           Tree
 		pl          PageLayout
@@ -37,14 +36,16 @@ func newTx(d *DB, t Tree, w bool) Tx {
 		d:        d,
 		writable: w,
 	}
-	tx.b = newBucket(&tx, t)
+	tx.b = newBucket(&tx, t, nil, nil)
 
 	return tx
 }
 
-func newBucket(tx *Tx, t Tree) *Bucket {
+func newBucket(tx *Tx, t Tree, name []byte, par *Bucket) *Bucket {
 	return &Bucket{
 		tx:          tx,
+		name:        name,
+		par:         par,
 		t:           t,
 		pl:          t.PageLayout(),
 		root:        t.Root(),
@@ -60,6 +61,9 @@ func (b *Bucket) Put(k, v []byte) error {
 func (b *Bucket) put(k, v []byte, F int) error {
 	if !b.allowed(true) {
 		panic("not allowed")
+	}
+	if err := b.allocRoot(); err != nil {
+		return err
 	}
 
 	ov, oF := b.t.Get(k)
@@ -79,6 +83,9 @@ func (b *Bucket) Get(k []byte) []byte {
 	if !b.allowed(false) {
 		panic("not allowed")
 	}
+	if b.root == NilPage {
+		return nil
+	}
 
 	v, F := b.t.Get(k)
 
@@ -92,6 +99,9 @@ func (b *Bucket) Get(k []byte) []byte {
 func (b *Bucket) Del(k []byte) error {
 	if !b.allowed(true) {
 		panic("not allowed")
+	}
+	if b.root == NilPage {
+		return nil
 	}
 
 	_, F := b.t.Get(k)
@@ -111,6 +121,9 @@ func (b *Bucket) Bucket(k []byte) *Bucket {
 	if !b.allowed(false) {
 		panic("not allowed")
 	}
+	if b.root == NilPage {
+		return nil
+	}
 
 	n := string(k)
 	if len(b.sub) != 0 {
@@ -128,13 +141,7 @@ func (b *Bucket) Bucket(k []byte) *Bucket {
 
 	t := NewTree(b.pl, off, b.page)
 
-	sub := &Bucket{
-		tx:   b.tx,
-		name: n,
-		par:  b,
-		t:    t,
-		root: off,
-	}
+	sub := newBucket(b.tx, t, k, b)
 
 	if b.sub == nil {
 		b.sub = make(map[string]*Bucket)
@@ -151,46 +158,27 @@ func (b *Bucket) PutBucket(k []byte) (*Bucket, error) {
 
 	n := string(k)
 	if len(b.sub) != 0 {
-		if _, ok := b.sub[n]; ok {
-			return nil, ErrBucketAlreadyExists
+		if sub, ok := b.sub[n]; ok {
+			return sub, nil
 		}
 	}
 
 	v, F := b.t.Get(k)
 	if v != nil {
-		if F == 0 {
+		if F == 0 && b.flagSupport {
 			return nil, ErrTypeMismatch
-		} else {
-			return nil, ErrBucketAlreadyExists
 		}
 	}
 
-	off, err := b.pl.Alloc(true)
-	if err != nil {
-		return nil, err
-	}
-
-	t := NewTree(b.pl, off, b.page)
-
 	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], uint64(off))
-
-	_, err = b.t.Put(k, buf[:], 1)
-	if err != nil {
-		return nil, err
-	}
-	err = b.propagate()
+	err := b.put(k, buf[:], 1)
 	if err != nil {
 		return nil, err
 	}
 
-	sub := &Bucket{
-		tx:   b.tx,
-		name: n,
-		par:  b,
-		t:    t,
-		root: off,
-	}
+	t := NewTree(b.pl, NilPage, b.page)
+
+	sub := newBucket(b.tx, t, k, b)
 
 	if b.sub == nil {
 		b.sub = make(map[string]*Bucket)
@@ -267,36 +255,26 @@ func (b *Bucket) delBucket(root, page int64) error {
 	return nil
 }
 
+func (b *Bucket) allocRoot() error {
+	if b.root != NilPage {
+		return nil
+	}
+
+	off, err := b.pl.Alloc(true)
+	if err != nil {
+		return err
+	}
+
+	b.t.SetRoot(off)
+
+	return nil
+}
+
 //func (b *Bucket) Cursor() Cursor { return nil }
 
-func (b *Bucket) NextUniqueKey(k []byte) []byte {
-	st, eq := b.t.Seek(nil, k)
-	if !eq {
-		return k
-	}
-
-	mask := b.page - 1
-	n := make([]byte, len(k))
-	copy(n, k)
-
-	for {
-		inc(n)
-
-		st := b.t.Step(st, false)
-		if st == nil {
-			break
-		}
-
-		off, i := st.OffIndex(mask)
-
-		q, _ := b.pl.Key(off, i, nil)
-
-		if !bytes.Equal(n, q) {
-			break
-		}
-	}
-
-	return n
+func (b *Bucket) SetPageLayout(p PageLayout) {
+	b.pl = p
+	b.t.SetPageLayout(p)
 }
 
 func inc(k []byte) {
@@ -310,8 +288,8 @@ func inc(k []byte) {
 
 func (b *Bucket) propagate() error {
 	root := b.t.Root()
-	//	log.Printf("propagate bucket %s (par %p)  %x <- %x", b.name, b.par, root, b.root)
 	if b.par == nil || root == b.root {
+		b.root = root
 		return nil
 	}
 
