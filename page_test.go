@@ -220,13 +220,13 @@ func testPagePutOnePage8(t *testing.T, pl PageLayout) int64 {
 	assert.NoError(t, err)
 	assert.EqualValues(t, -1, roff)
 
-	assert.EqualValues(t, "key_aaaa", nf(pl.Key(loff, 0, nil)))
-	assert.EqualValues(t, "key_bbbb", nf(pl.Key(loff, 1, nil)))
-	assert.EqualValues(t, "key_cccc", nf(pl.Key(loff, 2, nil)))
+	assert.Equal(t, "key_aaaa", string(nf(pl.Key(loff, 0, nil))))
+	assert.Equal(t, "key_bbbb", string(nf(pl.Key(loff, 1, nil))))
+	assert.Equal(t, "key_cccc", string(nf(pl.Key(loff, 2, nil))))
 
-	assert.EqualValues(t, "value_aa", pl.Value(loff, 0, nil))
-	assert.EqualValues(t, "value_bb", pl.Value(loff, 1, nil))
-	assert.EqualValues(t, "value_cc", pl.Value(loff, 2, nil))
+	assert.Equal(t, "value_aa", string(pl.Value(loff, 0, nil)))
+	assert.Equal(t, "value_bb", string(pl.Value(loff, 1, nil)))
+	assert.Equal(t, "value_cc", string(pl.Value(loff, 2, nil)))
 
 	return loff
 }

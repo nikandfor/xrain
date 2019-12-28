@@ -16,17 +16,16 @@ import (
 
 	// data
 	flags  byte
-	keylen byte // maxKeyLen-0xff means prefix, 0xff means keylen at overflow page
+	keylen byte
+	kcplen byte // key common prefix; it's index (or prefix) encoding
 	key    []byte
 	value  []byte
-
 
 */
 
 type (
-	KVLayout struct { // base [16]byte, freelist int64, links [size]int16, data []{F, keylen byte, key, value []byte}
+	KVLayout struct { // base [16]byte, links [size]int16, data []{F, keylen byte, key, value []byte}
 		BaseLayout
-		maxkey int
 	}
 )
 
@@ -34,7 +33,7 @@ var (
 	kvIndexStart = 0x10
 
 //	maxRecordLen = (0x1000 - kvIndexStart) / 0x10
-//	maxKeyLen    = maxRecordLen - (2 + 2 + 8)
+//	maxKeyLen    = maxRecordLen - (2 + 3 + 8)
 )
 
 // var _ PageLayout = &KVLayout{}
@@ -157,8 +156,8 @@ func (l *KVLayout) Free(off int64, r bool) (err error) {
 }
 
 func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
-	pp := l.b.Access(off, l.page)
-	p := pp
+	p := l.b.Access(off, l.page)
+	defer l.b.Unlock(p)
 
 	ln := l.nkeys(p)
 
@@ -166,7 +165,8 @@ func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 		dst := l.dataoff(p, i)
 		//	iF := int(p[dst])
 		kl := int(p[dst+1])
-		dst += 2
+		//	cp := int(p[dst+2])
+		dst += 3
 
 		ik := p[dst : dst+kl]
 
@@ -179,10 +179,6 @@ func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 
 	eq = i < ln && keycmp(i) == 0
 
-	if pp != nil {
-		l.b.Unlock(pp)
-	}
-
 	return
 }
 
@@ -191,7 +187,7 @@ func (l *KVLayout) Key(off int64, i int, buf []byte) (r []byte, F int) {
 	dst := l.dataoff(p, i)
 	F = int(p[dst])
 	kl := int(p[dst+1])
-	dst += 2
+	dst += 3
 
 	r = append(buf[:0], p[dst:dst+kl]...)
 	l.b.Unlock(p)
@@ -206,7 +202,7 @@ func (l *KVLayout) Value(off int64, i int, buf []byte) (r []byte) {
 	dend := l.dataend(p, i)
 
 	kl := int(p[dst+1])
-	dst += 2 + kl
+	dst += 3 + kl
 
 	r = append(buf[:0], p[dst:dend]...)
 
@@ -223,7 +219,7 @@ func (l *KVLayout) Int64(off int64, i int) int64 {
 	dend := l.dataend(p, i)
 
 	kl := int(p[dst+1])
-	dst += 2 + kl
+	dst += 3 + kl
 
 	return int64(binary.BigEndian.Uint64(p[dst:dend]))
 }
@@ -274,13 +270,13 @@ func (l *KVLayout) UpdatePageLink(off int64, i int, cp int64) (loff, roff int64,
 	// parent page old key
 	//	dst0 := l.dataoff(p0, i)
 	//	kl0 := int(p0[dst0+1])
-	//	dst0 += 2
+	//	dst0 += 3
 
 	// child page last key
 	n := l.nkeys(p1)
 	dst1 := l.dataoff(p1, n-1)
 	kl1 := int(p1[dst1+1])
-	dst1 += 2
+	dst1 += 3
 
 	//	eq := bytes.Equal(p0[dst0:dst0+kl0], p1[dst1:dst1+kl1])
 
@@ -309,7 +305,7 @@ func (l *KVLayout) InsertPageLink(off int64, i int, cp int64) (loff, roff int64,
 	n := l.nkeys(p1)
 	dst1 := l.dataoff(p1, n-1)
 	kl1 := int(p1[dst1+1])
-	dst1 += 2
+	dst1 += 3
 
 	lk = make([]byte, kl1+8)
 	copy(lk, p1[dst1:dst1+kl1])
@@ -345,7 +341,7 @@ again:
 		n := l.nkeys(p)
 		free := l.pagefree(p, n)
 
-		//	tlog.Printf("insert at %d / %d  dsize %x / %x", i, n, 2+len(k)+len(v), free)
+		//	tlog.Printf("insert at %d / %d  dsize %x / %x", i, n, 3+len(k)+len(v), free)
 
 		if free >= 1+1+len(k)+len(v) {
 			if ver == l.ver {
@@ -408,7 +404,7 @@ again:
 }
 
 func (l *KVLayout) pageInsert(p []byte, i, n, ff int, k, v []byte) {
-	dlen := 1 + 1 + len(k) + len(v)
+	dlen := 3 + len(k) + len(v)
 	if i < n {
 		l.pageMoveFwd(p, p, 1, dlen, i, n)
 	}
@@ -420,8 +416,8 @@ func (l *KVLayout) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 
 	p[dst] = byte(ff) // flags
 	p[dst+1] = byte(len(k))
-	copy(p[dst+2:], k)
-	copy(p[dst+2+len(k):], v)
+	copy(p[dst+3:], k)
+	copy(p[dst+3+len(k):], v)
 
 	l.setdataoff(p, i, dst)
 
@@ -480,7 +476,7 @@ func (l *KVLayout) Siblings(off int64, i int, ioff int64) (li int, loff, roff in
 	readoff := func(p []byte, i int) int64 {
 		s := l.dataoff(p, i)
 		kl := int(p[s+1])
-		return int64(binary.BigEndian.Uint64(p[s+2+kl:]))
+		return int64(binary.BigEndian.Uint64(p[s+3+kl:]))
 	}
 
 	p := l.b.Access(off, l.page)

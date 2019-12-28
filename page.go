@@ -24,7 +24,6 @@ type (
 
 		NKeys(p int64) int
 		IsLeaf(p int64) bool
-		SetLeaf(p int64, y bool)
 
 		Search(p int64, k []byte) (i int, eq bool)
 		Key(p int64, i int, buf []byte) ([]byte, int)
@@ -287,6 +286,7 @@ func (l *FixedLayout) Alloc(leaf bool) (int64, error) {
 
 func (l *FixedLayout) Search(off int64, k []byte) (i int, eq bool) {
 	p := l.b.Access(off, l.p)
+	defer l.b.Unlock(p)
 
 	ln := l.nkeys(p)
 	kv := l.v
@@ -306,8 +306,6 @@ func (l *FixedLayout) Search(off int64, k []byte) (i int, eq bool) {
 	})
 
 	eq = i < ln && keycmp(i) == 0
-
-	l.b.Unlock(p)
 
 	return
 }
