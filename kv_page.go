@@ -168,7 +168,7 @@ func (l *KVLayout) Free(off int64, r bool) (err error) {
 	return l.BaseLayout.Free(off, false)
 }
 
-var max int
+//var max int
 
 func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 	p := l.b.Access(off, l.page)
@@ -177,6 +177,7 @@ func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 	var cpsbuf [1000]byte
 	ln := l.nkeys(p)
 	fastpath := -1
+	fastval := -1
 
 	keycmp := func(i int) int {
 		cps := cpsbuf[:0]
@@ -185,7 +186,11 @@ func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 		j := i
 		for ; j != 0; j-- {
 			if j < fastpath {
-				return -1
+				if fastval == -1 {
+					return -1
+				} else {
+					break
+				}
 			}
 
 			dst := l.dataoff(p, j)
@@ -202,9 +207,9 @@ func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 			cps = append(cps, cp)
 			pcp = cp
 		}
-		if len(cps) > max {
-			max = len(cps)
-		}
+		//	if len(cps) > max {
+		//		max = len(cps)
+		//	}
 
 		for ; j <= i; j++ {
 			dst := l.dataoff(p, j)
@@ -247,9 +252,15 @@ func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 			if c != 0 {
 				if c == -1 && j > fastpath {
 					fastpath = j
+					fastval = -1
 				}
 				return c
 			}
+		}
+
+		if i > fastpath {
+			fastpath = i
+			fastval = 0
 		}
 
 		eq = true

@@ -444,7 +444,7 @@ func BenchmarkPageKVIndexSearch(b *testing.B) {
 		pl.Search(off, k[:])
 	}
 
-	b.Logf("max: %d", max)
+	//	b.Logf("max: %d", max)
 }
 
 func TestPageKVFree(t *testing.T) {
