@@ -26,6 +26,8 @@ import (
 
 
 	Index (prefix) encoding
+	v - common prefix
+	  v - rest of string
 
 	0 ab0        // ab0
 	2   cd11     // abcd11
@@ -355,7 +357,7 @@ again:
 
 		if i+1 < n {
 			l.pageSavePrefix(p, i)
-			l.pageMove(p, p, i, i+1, n)
+			l.pageMoveCopy(p, p, i, i+1, n)
 		}
 
 		l.setnkeys(p, n-1)
@@ -500,7 +502,7 @@ again:
 		l.setnkeys(lp, m)
 		l.setnkeys(rp, n-m)
 
-		l.pageMove(rp, lp, 0, m, n)
+		l.pageMoveSplit(rp, lp, m, n)
 
 		if i <= m {
 			l.pageInsert(lp, i, m, ff, k, v)
@@ -571,7 +573,66 @@ func (l *KVLayout) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 	l.setnkeys(p, n+1)
 }
 
-func (l *KVLayout) pageMove(r, p []byte, i, st, nxt int) {
+func (l *KVLayout) pageMoveSplit(r, p []byte, i, n int) {
+	l.pageMoveOne(r, p, 0, i)
+	if i < n {
+		l.pageMoveCopy(r, p, 1, i, n)
+	}
+}
+
+func (l *KVLayout) pageMoveJoin(p, r []byte, pn, rn int) {
+	l.pageMoveOne(p, r, pn, 0)
+	if rn > 1 {
+		l.pageMoveCopy(p, r, pn+1, 1, rn)
+	}
+}
+
+func (l *KVLayout) pageMoveOne(r, p []byte, ri, i int) {
+	tlog.Printf("move one key %d <- %d", ri, i)
+	// first key
+	j := i
+	for ; j != 0; j-- {
+		st := l.dataoff(p, j)
+		cp := int(p[st+2])
+		if cp == 0 {
+			break
+		}
+	}
+
+	st := l.dataoff(p, i)
+	end := l.dataend(p, i)
+	kl := int(p[st+1])
+	cp := int(p[st+2])
+
+	dlen := end - st + cp
+	dend := l.dataend(r, ri)
+	dst := dend - dlen
+
+	r[dst] = p[st]
+	r[dst+1] = byte(cp + kl)
+	r[dst+2] = 0
+
+	l.setdataoff(r, ri, dst)
+
+	st += 3
+	dst += 3
+
+	for ; j <= i; j++ {
+		st := l.dataoff(p, j)
+		kl := int(p[st+1])
+		cp := int(p[st+2])
+		st += 3
+		tlog.Printf("j %d/%d  key %x %x : %q", j, i, cp, kl, p[st:st+kl])
+
+		copy(r[dst+cp:], p[st:st+kl])
+	}
+
+	copy(r[dst+cp+kl:], p[st+kl:end])
+
+	tlog.Printf("split:\n%v\n%v", hex.Dump(r), hex.Dump(p))
+}
+
+func (l *KVLayout) pageMoveCopy(r, p []byte, i, st, nxt int) {
 	if &r[0] == &p[0] && i > st {
 		panic("forward move")
 	}
@@ -597,6 +658,10 @@ func (l *KVLayout) pageMove(r, p []byte, i, st, nxt int) {
 		l.setdataoff(r, j+di, off+diff)
 		//	tlog.Printf("index %d %x -> %d %x", j, off, j+di, off+diff)
 	}
+}
+
+func (l *KVLayout) pageMove(r, p []byte, i, st, nxt int) {
+	l.pageMoveCopy(r, p, i, st, nxt)
 }
 
 func (l *KVLayout) pageSavePrefix(p []byte, i int) {
@@ -756,7 +821,7 @@ again:
 		}
 
 		if kvIndexStart+lds+rds <= len(lp) {
-			l.pageMove(lp, rp, ln, 0, rn)
+			l.pageMoveJoin(lp, rp, ln, rn)
 			l.setnkeys(lp, ln+rn)
 
 			rfree = true
