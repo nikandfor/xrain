@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"flag"
 	"log"
 	"math/rand"
 	"os"
@@ -327,4 +328,31 @@ func (t *HeavyTester) worker(c, r chan HeavyTask) {
 
 		r <- w
 	}
+}
+
+func TestMain(m *testing.M) {
+	var (
+		v   = flag.String("v", "", "verbocity topics")
+		det = flag.Bool("detailed", false, "detailed logs")
+		no  = flag.Bool("no-logs", false, "hide logs")
+	)
+
+	flag.Parse()
+
+	if *no {
+		tlog.DefaultLogger = tlog.New(tlog.Discard{})
+	} else {
+		ff := tlog.LstdFlags
+		if *det {
+			ff = tlog.LdetFlags
+		}
+
+		tlog.DefaultLogger = tlog.New(tlog.NewConsoleWriter(os.Stderr, ff))
+	}
+
+	if *v != "" {
+		tlog.SetFilter(*v)
+	}
+
+	os.Exit(m.Run())
 }
