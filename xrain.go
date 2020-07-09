@@ -19,7 +19,7 @@ var (
 	CRCTable = crc64.MakeTable(crc64.ECMA)
 )
 
-var (
+var ( // errors
 	ErrPageChecksum = errors.New("page checksum mismatch")
 )
 
@@ -186,6 +186,7 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	d.updateKeep()
 	d.verp++
 	ver, keep := d.verp, d.keep
+	write := d.write
 	d.mu.Unlock()
 
 	d.fl.SetVer(ver, keep)
@@ -200,8 +201,7 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 
 	//	tlog.Printf("Update %2d %2d  %2d\n%v", ver, keep, batch, dumpFile(d.t.PageLayout()))
 
-	// TODO: keep safe page in case of batch failure
-	d.writeRoot(ver)
+	d.writeRoot(write)
 
 	err = d.batch.Wait(batch)
 	if err != nil {

@@ -3,10 +3,7 @@ package xrain
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/hex"
 	"sort"
-
-	"github.com/nikandfor/tlog"
 )
 
 /*
@@ -19,36 +16,19 @@ import (
 
 	// data
 	flags  byte
-	keylen byte
-	kcplen byte // key common prefix; it's index (or prefix) encoding
+	keylen byte // could be prefix
 	key    []byte
 	value  []byte
-
-
-	Index (prefix) encoding
-	v - common prefix
-	  v - rest of string
-
-	0 ab0        // ab0
-	2   cd11     // abcd11
-	4     ef222  // abcdef222
-	6       gh   // abcdefgh
-	2   qw11     // abqw11
-	4     er222  // abqwer222
-	6       ty   // abqwerty
 */
 
 type (
-	KVLayout struct { // base [16]byte, links [size]int16, data []{F, keylen byte, key, value []byte}
+	KVLayout struct { // base [16]byte, offsets [size]int16, data []{...}
 		BaseLayout
 	}
 )
 
 var (
 	kvIndexStart = 0x10
-
-//	maxRecordLen = (0x1000 - kvIndexStart) / 0x10
-//	maxKeyLen    = maxRecordLen - (2 + 3 + 8)
 )
 
 // var _ PageLayout = &KVLayout{}
@@ -126,12 +106,14 @@ func (l *KVLayout) Alloc(leaf bool) (int64, error) {
 	if err != nil {
 		return NilPage, err
 	}
+
 	p := l.b.Access(off, 0x10)
 	l.setleaf(p, leaf)
 	l.setnkeys(p, 0)
 	l.setver(p, l.ver)
-	l.setoverflow(p, 1)
+	l.setoverflow(p, 0)
 	l.b.Unlock(p)
+
 	return off, nil
 }
 
@@ -170,138 +152,44 @@ func (l *KVLayout) Free(off int64, r bool) (err error) {
 	return l.BaseLayout.Free(off, false)
 }
 
-//var max int
-
 func (l *KVLayout) Search(off int64, k []byte) (i int, eq bool) {
 	p := l.b.Access(off, l.page)
-	defer l.b.Unlock(p)
 
-	var cpsbuf [1000]byte
 	ln := l.nkeys(p)
-	fastpath := -1
-	fastval := -1
 
 	keycmp := func(i int) int {
-		cps := cpsbuf[:0]
-		pcp := byte(255)
+		dst := l.dataoff(p, i)
+		//	iF := int(p[dst])
+		kl := int(p[dst+1])
+		dst += 2
 
-		j := i
-		for ; j != 0; j-- {
-			if j < fastpath {
-				if fastval == -1 {
-					return -1
-				} else {
-					break
-				}
-			}
+		ik := p[dst : dst+kl]
 
-			dst := l.dataoff(p, j)
-			//	kl := int(p[dst+1])
-			cp := p[dst+2]
-			if cp == 0 {
-				pcp = cp
-				break
-			}
-			if cp > pcp {
-				cp = pcp
-			}
-			//	tlog.Printf("add common prefix %x of %q [%x:]", cp, p[dst+3:dst+3+kl], p[dst+2])
-			cps = append(cps, cp)
-			pcp = cp
-		}
-		//	if len(cps) > max {
-		//		max = len(cps)
-		//	}
-
-		for ; j <= i; j++ {
-			dst := l.dataoff(p, j)
-			kl := int(p[dst+1])
-			cp := int(p[dst+2])
-			lim := cp + kl
-			if j < i {
-				cl := len(cps) - 1
-				ncp := cps[cl]
-				cps = cps[:cl]
-				pcp = ncp
-
-				if int(ncp) < lim {
-					lim = int(ncp)
-				}
-
-				/*
-					dst := l.dataoff(p, j)
-					nkl := int(p[dst+1])
-					ncp2 := int(p[dst+2])
-
-					tlog.Printf("limit %d: %x from cp+kl %x and cps %x  key %q %x:%x", j, lim, cp+kl, ncp, p[dst+3:dst+3+nkl], ncp2, nkl)
-				*/
-			}
-
-			if lim < cp {
-				continue
-			}
-
-			ik := p[dst+3 : dst+3+lim-cp]
-
-			klen := lim
-			if klen > len(k) {
-				klen = len(k)
-			}
-
-			//	tlog.Printf("cmp %q[%x:%x] with %d/%d ik %q[%x:%x]", k, cp, klen, j, i, p[dst+3:dst+3+kl], cp, lim)
-
-			c := bytes.Compare(ik, k[cp:klen])
-			if c != 0 {
-				if c == -1 && j > fastpath {
-					fastpath = j
-					fastval = -1
-				}
-				return c
-			}
-		}
-
-		if i > fastpath {
-			fastpath = i
-			fastval = 0
-		}
-
-		eq = true
-
-		return 0
+		return bytes.Compare(ik, k)
 	}
-
-	//	tlog.Printf("search %q in %d\n%v", k, ln, hex.Dump(p))
 
 	i = sort.Search(ln, func(i int) bool {
 		return keycmp(i) >= 0
 	})
 
-	//	eq = i < ln && keycmp(i) == 0
+	eq = i < ln && keycmp(i) == 0
+
+	l.b.Unlock(p)
 
 	return
 }
 
 func (l *KVLayout) Key(off int64, i int, buf []byte) (r []byte, F int) {
 	p := l.b.Access(off, l.page)
-	//	tlog.Printf("get key off %x i %d from page\n%v", off, i, hex.Dump(p))
-	r, F = l.key(p, i, buf)
-	l.b.Unlock(p)
-	return
-}
 
-func (l *KVLayout) key(p []byte, i int, buf []byte) (r []byte, F int) {
 	dst := l.dataoff(p, i)
 	F = int(p[dst])
 	kl := int(p[dst+1])
-	cp := int(p[dst+2])
-	//	tlog.Printf("key i %d dst %x F %x kl %x cp %x\n%v", i, dst, F, kl, cp, hex.Dump(p))
-	dst += 3
+	dst += 2
 
-	if cp != 0 {
-		buf, _ = l.key(p, i-1, buf)
-	}
+	r = append(buf[:0], p[dst:dst+kl]...)
 
-	r = append(buf[:cp], p[dst:dst+kl]...)
+	l.b.Unlock(p)
 
 	return
 }
@@ -313,7 +201,7 @@ func (l *KVLayout) Value(off int64, i int, buf []byte) (r []byte) {
 	dend := l.dataend(p, i)
 
 	kl := int(p[dst+1])
-	dst += 3 + kl
+	dst += 2 + kl
 
 	r = append(buf[:0], p[dst:dend]...)
 
@@ -330,7 +218,7 @@ func (l *KVLayout) Int64(off int64, i int) int64 {
 	dend := l.dataend(p, i)
 
 	kl := int(p[dst+1])
-	dst += 3 + kl
+	dst += 2 + kl
 
 	return int64(binary.BigEndian.Uint64(p[dst:dend]))
 }
@@ -356,8 +244,7 @@ again:
 		n := l.nkeys(p)
 
 		if i+1 < n {
-			l.pageSavePrefix(p, i)
-			l.pageMoveCopy(p, p, i, i+1, n)
+			l.pageMove(p, p, i, i+1, n)
 		}
 
 		l.setnkeys(p, n-1)
@@ -382,13 +269,13 @@ func (l *KVLayout) UpdatePageLink(off int64, i int, cp int64) (loff, roff int64,
 	// parent page old key
 	//	dst0 := l.dataoff(p0, i)
 	//	kl0 := int(p0[dst0+1])
-	//	dst0 += 3
+	//	dst0 += 2
 
 	// child page last key
 	n := l.nkeys(p1)
 	dst1 := l.dataoff(p1, n-1)
 	kl1 := int(p1[dst1+1])
-	dst1 += 3
+	dst1 += 2
 
 	//	eq := bytes.Equal(p0[dst0:dst0+kl0], p1[dst1:dst1+kl1])
 
@@ -406,7 +293,7 @@ func (l *KVLayout) UpdatePageLink(off int64, i int, cp int64) (loff, roff int64,
 
 	binary.BigEndian.PutUint64(lk[kl1:], uint64(cp))
 
-	return l.insert(off, i, 0, lk[:kl1], lk[kl1:])
+	return l.Insert(off, i, 0, lk[:kl1], lk[kl1:])
 }
 
 func (l *KVLayout) InsertPageLink(off int64, i int, cp int64) (loff, roff int64, err error) {
@@ -417,7 +304,7 @@ func (l *KVLayout) InsertPageLink(off int64, i int, cp int64) (loff, roff int64,
 	n := l.nkeys(p1)
 	dst1 := l.dataoff(p1, n-1)
 	kl1 := int(p1[dst1+1])
-	dst1 += 3
+	dst1 += 2
 
 	lk = make([]byte, kl1+8)
 	copy(lk, p1[dst1:dst1+kl1])
@@ -426,14 +313,10 @@ func (l *KVLayout) InsertPageLink(off int64, i int, cp int64) (loff, roff int64,
 
 	binary.BigEndian.PutUint64(lk[kl1:], uint64(cp))
 
-	return l.insert(off, i, 0, lk[:kl1], lk[kl1:])
+	return l.Insert(off, i, 0, lk[:kl1], lk[kl1:])
 }
 
-func (l *KVLayout) Insert(off int64, i, F int, k, v []byte) (loff, roff int64, err error) {
-	return l.insert(off, i, F, k, v)
-}
-
-func (l *KVLayout) insert(off int64, i, ff int, k, v []byte) (loff, roff int64, err error) {
+func (l *KVLayout) Insert(off int64, i, ff int, k, v []byte) (loff, roff int64, err error) {
 	loff = off
 	var alloc, split bool
 	var ver int64
@@ -453,9 +336,9 @@ again:
 		n := l.nkeys(p)
 		free := l.pagefree(p, n)
 
-		//	tlog.Printf("insert at %d / %d  dsize %x / %x", i, n, 3+len(k)+len(v), free)
+		//	tlog.Printf("insert at %d / %d  dsize %x / %x", i, n, 2+len(k)+len(v), free)
 
-		if free >= 1+1+len(k)+len(v) {
+		if free >= 4+len(k)+len(v) {
 			if ver == l.ver {
 				l.pageInsert(p, i, n, ff, k, v)
 			}
@@ -502,7 +385,7 @@ again:
 		l.setnkeys(lp, m)
 		l.setnkeys(rp, n-m)
 
-		l.pageMoveSplit(rp, lp, m, n)
+		l.pageMove(rp, lp, 0, m, n)
 
 		if i <= m {
 			l.pageInsert(lp, i, m, ff, k, v)
@@ -516,45 +399,9 @@ again:
 }
 
 func (l *KVLayout) pageInsert(p []byte, i, n, ff int, k, v []byte) {
-	var cp int
-	if i != 0 {
-		if i < n {
-			dst := l.dataoff(p, i)
-			cp = int(p[dst+2])
-		}
-
-		dst := l.dataoff(p, i-1)
-		jkl := int(p[dst+1])
-
-		for cp < jkl && p[dst+3+cp] == k[cp] {
-			cp++
-		}
-		//	tlog.Printf("insert key %q into pos %d. common prefix %x %+x with %q", k, i, cp, p[dst+3:dst+3+jkl])
-	}
-	k = k[cp:]
-
-	dlen := 3 + len(k) + len(v)
+	dlen := 1 + 1 + len(k) + len(v)
 	if i < n {
-		dst := l.dataoff(p, i)
-		jkl := int(p[dst+1])
-		diff := 0
-
-		for diff < jkl && diff < len(k) && p[dst+3+diff] == k[diff] {
-			diff++
-		}
-
-		//	tlog.Printf("next key: cp %x %+x  kl %x of %q  new %q", jcp, diff, jkl, p[dst+3:dst+3+jkl], k)
-
-		if diff != 0 {
-			dend := l.dataend(p, i)
-			p[dst+1] -= byte(diff)
-			p[dst+2] += byte(diff)
-			dst += 3
-			copy(p[dst:], p[dst+diff:dend])
-			//	tlog.Printf("next key cp increased %x %+x : %q", jcp, diff, p[dst:dst+int(p[dst-2])])
-		}
-
-		l.pageMoveFwd(p, p, 1, dlen-diff, i, n)
+		l.pageMoveFwd(p, p, i, n, 1, dlen)
 	}
 
 	dend := l.dataend(p, i)
@@ -564,75 +411,15 @@ func (l *KVLayout) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 
 	p[dst] = byte(ff) // flags
 	p[dst+1] = byte(len(k))
-	p[dst+2] = byte(cp)
-	copy(p[dst+3:], k)
-	copy(p[dst+3+len(k):], v)
+	copy(p[dst+2:], k)
+	copy(p[dst+2+len(k):], v)
 
 	l.setdataoff(p, i, dst)
 
 	l.setnkeys(p, n+1)
 }
 
-func (l *KVLayout) pageMoveSplit(r, p []byte, i, n int) {
-	l.pageMoveOne(r, p, 0, i)
-	if i < n {
-		l.pageMoveCopy(r, p, 1, i, n)
-	}
-}
-
-func (l *KVLayout) pageMoveJoin(p, r []byte, pn, rn int) {
-	l.pageMoveOne(p, r, pn, 0)
-	if rn > 1 {
-		l.pageMoveCopy(p, r, pn+1, 1, rn)
-	}
-}
-
-func (l *KVLayout) pageMoveOne(r, p []byte, ri, i int) {
-	tlog.Printf("move one key %d <- %d", ri, i)
-	// first key
-	j := i
-	for ; j != 0; j-- {
-		st := l.dataoff(p, j)
-		cp := int(p[st+2])
-		if cp == 0 {
-			break
-		}
-	}
-
-	st := l.dataoff(p, i)
-	end := l.dataend(p, i)
-	kl := int(p[st+1])
-	cp := int(p[st+2])
-
-	dlen := end - st + cp
-	dend := l.dataend(r, ri)
-	dst := dend - dlen
-
-	r[dst] = p[st]
-	r[dst+1] = byte(cp + kl)
-	r[dst+2] = 0
-
-	l.setdataoff(r, ri, dst)
-
-	st += 3
-	dst += 3
-
-	for ; j <= i; j++ {
-		st := l.dataoff(p, j)
-		kl := int(p[st+1])
-		cp := int(p[st+2])
-		st += 3
-		tlog.Printf("j %d/%d  key %x %x : %q", j, i, cp, kl, p[st:st+kl])
-
-		copy(r[dst+cp:], p[st:st+kl])
-	}
-
-	copy(r[dst+cp+kl:], p[st+kl:end])
-
-	tlog.Printf("split:\n%v\n%v", hex.Dump(r), hex.Dump(p))
-}
-
-func (l *KVLayout) pageMoveCopy(r, p []byte, i, st, nxt int) {
+func (l *KVLayout) pageMove(r, p []byte, i, st, nxt int) {
 	if &r[0] == &p[0] && i > st {
 		panic("forward move")
 	}
@@ -640,7 +427,7 @@ func (l *KVLayout) pageMoveCopy(r, p []byte, i, st, nxt int) {
 		panic("qq")
 	}
 
-	dst := l.dataend(p, nxt)
+	dst := l.dataoff(p, nxt-1)
 	dend := l.dataend(p, st)
 	dlen := dend - dst
 
@@ -660,70 +447,12 @@ func (l *KVLayout) pageMoveCopy(r, p []byte, i, st, nxt int) {
 	}
 }
 
-func (l *KVLayout) pageMove(r, p []byte, i, st, nxt int) {
-	l.pageMoveCopy(r, p, i, st, nxt)
-}
-
-func (l *KVLayout) pageSavePrefix(p []byte, i int) {
-	tlog.Printf("save key prefix: %d\n%v", i, hex.Dump(p))
-
-	st := l.dataoff(p, i+1)
-	end := l.dataend(p, i+1)
-	kl := int(p[st+1])
-	cp := int(p[st+2])
-
-	pst := end
-	pend := l.dataend(p, i)
-	pkl := int(p[pst+1])
-	pcp := int(p[pst+2])
-	pvlen := pend - (pst + 3 + pkl)
-
-	diff := cp - pcp
-	if diff <= 0 {
-		return
-	}
-
-	tlog.Printf("key cp %x kl %x  prefix cp %x kl %x  : %q", cp, kl, pcp, pkl, p[pst+3:pst+3+cp-pcp])
-	if diff <= 3+pvlen {
-		copy(p[pend-diff:pend], p[pst+3:]) // save prefix
-		copy(p[st+3+diff:], p[st+3:end])   // move key + value
-		copy(p[st+3:], p[pend-diff:pend])  // move prefix
-	} else {
-		n := l.nkeys(p)
-		bufend := l.dataoff(p, n-1)
-		bufst := kvIndexStart + 2*n
-
-		kvlen := end - (st + 3)
-
-		if diff <= bufend-bufst {
-			copy(p[bufend-diff:bufend], p[pst+3:]) // save prefix
-			copy(p[st+3+diff:], p[st+3:end])       // move key + value
-			copy(p[st+3:], p[bufend-diff:bufend])  // move prefix
-		} else if kvlen < bufend-bufst {
-			copy(p[bufend-kvlen:bufend], p[st+3:end])   // save key + value
-			copy(p[st+3:], p[pst+3:pst+3+diff])         // move prefix
-			copy(p[st+3+diff:], p[bufend-kvlen:bufend]) // move key + value
-		} else {
-			buf := make([]byte, diff)
-			copy(buf, p[pst+3:])             // save prefix
-			copy(p[st+3+diff:], p[st+3:end]) // move key + value
-			copy(p[st+3:], buf)              // move prefix
-		}
-	}
-	p[st+1] += byte(diff)
-	p[st+2] -= byte(diff)
-
-	l.setdataoff(p, i, pst+diff)
-
-	tlog.Printf("prefix saved: %d\n%v", i, hex.Dump(p))
-}
-
-func (l *KVLayout) pageMoveFwd(r, p []byte, di, dlen, i, n int) {
+func (l *KVLayout) pageMoveFwd(r, p []byte, i, n, di, dlen int) {
 	dst := l.dataoff(p, n-1)
 	dend := l.dataend(p, i)
 	copy(p[dst-dlen:], p[dst:dend])
 
-	for j := n - 1; j >= i; j-- {
+	for j := i; j < n; j++ {
 		off := l.dataoff(p, j)
 		l.setdataoff(p, j+di, off-dlen)
 	}
@@ -742,7 +471,7 @@ func (l *KVLayout) Siblings(off int64, i int, ioff int64) (li int, loff, roff in
 	readoff := func(p []byte, i int) int64 {
 		s := l.dataoff(p, i)
 		kl := int(p[s+1])
-		return int64(binary.BigEndian.Uint64(p[s+3+kl:]))
+		return int64(binary.BigEndian.Uint64(p[s+2+kl:]))
 	}
 
 	p := l.b.Access(off, l.page)
@@ -821,7 +550,7 @@ again:
 		}
 
 		if kvIndexStart+lds+rds <= len(lp) {
-			l.pageMoveJoin(lp, rp, ln, rn)
+			l.pageMove(lp, rp, ln, 0, rn)
 			l.setnkeys(lp, ln+rn)
 
 			rfree = true
@@ -830,7 +559,7 @@ again:
 
 		if ln > rn {
 			ds := l.datasize(lp, m, ln)
-			l.pageMoveFwd(rp, rp, ln-m, ds, 0, rn)
+			l.pageMoveFwd(rp, rp, 0, rn, ln-m, ds)
 			l.pageMove(rp, lp, 0, m, ln)
 			l.setnkeys(lp, m)
 			l.setnkeys(rp, sum-m)
