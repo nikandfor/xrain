@@ -153,7 +153,7 @@ func TestFreelist2AllocPow(t *testing.T) {
 	if !assert.NotNil(t, st, "nil freelist expected") {
 		return
 	}
-	off, i := st.OffIndex(Mask)
+	off, i := st.LastOffIndex(Mask)
 	next, _ := pl.Key(off, i, nil)
 	assert.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0}, next)
 	st = tr.Step(st, false)
@@ -261,7 +261,7 @@ func TestFreelist2Auto(t *testing.T) {
 		walk(tr.root)
 
 		for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
-			poff, pi := st.OffIndex(fl.mask)
+			poff, pi := st.LastOffIndex(fl.mask)
 			k, _ := pl.Key(poff, pi, nil)
 
 			off := int64(binary.BigEndian.Uint64(k))

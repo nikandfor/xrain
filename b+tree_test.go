@@ -76,7 +76,7 @@ func TestTreeIterator(t *testing.T) {
 
 	q := 0
 	for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
-		off, i := st.OffIndex(0x7f)
+		off, i := st.LastOffIndex(0x7f)
 
 		ek := fmt.Sprintf("key_%04x", q)
 		ev := fmt.Sprintf("value_%02x", q)
@@ -92,7 +92,7 @@ func TestTreeIterator(t *testing.T) {
 
 	q = N
 	for st := tr.Step(nil, true); st != nil; st = tr.Step(st, true) {
-		off, i := st.OffIndex(0x7f)
+		off, i := st.LastOffIndex(0x7f)
 
 		q--
 
@@ -140,7 +140,7 @@ func TestTreeBig(t *testing.T) {
 
 	q := 0
 	for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
-		off, i := st.OffIndex(0x7f)
+		off, i := st.LastOffIndex(0x7f)
 
 		ek := fmt.Sprintf("key_%04x", q)
 		ev := fmt.Sprintf("value_%02x", q)
@@ -156,7 +156,7 @@ func TestTreeBig(t *testing.T) {
 
 	q = N
 	for st := tr.Step(nil, true); st != nil; st = tr.Step(st, true) {
-		off, i := st.OffIndex(0x7f)
+		off, i := st.LastOffIndex(0x7f)
 		q--
 
 		ek := fmt.Sprintf("key_%04x", q)
@@ -199,7 +199,7 @@ func TestTreeBig(t *testing.T) {
 	}
 
 	for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
-		off, i := st.OffIndex(0x7f)
+		off, i := st.LastOffIndex(0x7f)
 
 		k, _ := pl.Key(off, i, nil)
 		_, err := tr.Del(k)
@@ -254,7 +254,7 @@ func BenchmarkTreeIterator(b *testing.B) {
 
 	for j := 0; j < b.N; j++ {
 		for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
-			off, i := st.OffIndex(0x7f)
+			off, i := st.LastOffIndex(0x7f)
 			_, _ = pl.Key(off, i, nil)
 			_ = pl.Value(off, i, nil)
 		}

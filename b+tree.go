@@ -39,9 +39,9 @@ type (
 		depth int
 	}
 
-	Stack []keylink
+	Stack []Keylink
 
-	keylink int64
+	Keylink int64
 )
 
 func NewTree(p PageLayout, root, page int64) *FileTree {
@@ -113,7 +113,7 @@ func (t *FileTree) Put(k, v []byte, F int) (old []byte, err error) {
 
 	//	log.Printf("root %x Put %x -> %x", t.root, k, v)
 
-	off, i := st.OffIndex(t.mask)
+	off, i := st.LastOffIndex(t.mask)
 
 	if eq {
 		old = t.p.Value(off, i, nil)
@@ -147,7 +147,7 @@ func (t *FileTree) Del(k []byte) (old []byte, err error) {
 		return
 	}
 
-	off, i := st.OffIndex(t.mask)
+	off, i := st.LastOffIndex(t.mask)
 
 	old = t.p.Value(off, i, nil)
 
@@ -169,7 +169,7 @@ func (t *FileTree) Get(k []byte) (v []byte, F int) {
 		return nil, 0
 	}
 
-	off, i := st.OffIndex(t.mask)
+	off, i := st.LastOffIndex(t.mask)
 
 	_, F = t.p.Key(off, i, nil)
 
@@ -182,13 +182,13 @@ func (t *FileTree) Seek(st Stack, k []byte) (_ Stack, eq bool) {
 	off := t.root
 	var i, d int
 	for {
-		st = append(st, keylink(off))
+		st = append(st, Keylink(off))
 
 		i, eq = t.p.Search(off, k)
 		//	log.Printf("search %2x %q -> %x %v", off, k, i, eq)
 
 		if t.p.IsLeaf(off) {
-			st[d] |= keylink(i)
+			st[d] |= Keylink(i)
 			break
 		}
 
@@ -196,7 +196,7 @@ func (t *FileTree) Seek(st Stack, k []byte) (_ Stack, eq bool) {
 			i--
 		}
 
-		st[d] |= keylink(i)
+		st[d] |= Keylink(i)
 		d++
 
 		off = t.p.Int64(off, i)
@@ -335,7 +335,7 @@ func (t *FileTree) Step(st Stack, back bool) Stack {
 			} else {
 				i = 0
 			}
-			st = append(st, keylink(p)|keylink(i))
+			st = append(st, Keylink(p)|Keylink(i))
 
 			if t.p.IsLeaf(p) {
 				return st
@@ -354,14 +354,14 @@ func (t *FileTree) Step(st Stack, back bool) Stack {
 	if back {
 		if i > 0 {
 			i--
-			st[l] = keylink(off) | keylink(i)
+			st[l] = NewKeylink(off, i)
 			return st
 		}
 	} else {
 		n := t.p.NKeys(off)
 		if i+1 < n {
 			i++
-			st[l] = keylink(off) | keylink(i)
+			st[l] = NewKeylink(off, i)
 			return st
 		}
 	}
@@ -375,7 +375,7 @@ func (t *FileTree) Step(st Stack, back bool) Stack {
 		return nil
 	}
 
-	poff, pi := par.OffIndex(t.mask)
+	poff, pi := par.LastOffIndex(t.mask)
 
 	off = t.p.Int64(poff, pi)
 
@@ -385,20 +385,28 @@ func (t *FileTree) Step(st Stack, back bool) Stack {
 		i = 0
 	}
 
-	st[l] = keylink(off) | keylink(i)
+	st[l] = NewKeylink(off, i)
 
 	return st
 }
 
-func (l keylink) Off(mask int64) int64 {
+func NewKeylink(off int64, i int) Keylink {
+	return Keylink(off) | Keylink(i)
+}
+
+func (l Keylink) Off(mask int64) int64 {
 	return int64(l) &^ mask
 }
 
-func (l keylink) Index(mask int64) int {
+func (l Keylink) Index(mask int64) int {
 	return int(int64(l) & mask)
 }
 
-func (st Stack) OffIndex(m int64) (int64, int) {
+func (l Keylink) OffIndex(m int64) (int64, int) {
+	return l.Off(m), l.Index(m)
+}
+
+func (st Stack) LastOffIndex(m int64) (int64, int) {
 	last := st[len(st)-1]
 	return last.Off(m), last.Index(m)
 }

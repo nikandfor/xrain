@@ -129,7 +129,7 @@ next:
 	if st == nil {
 		return l.allocGrow(n)
 	}
-	off, i := st.OffIndex(l.mask)
+	off, i := st.LastOffIndex(l.mask)
 	last, _ := l.pl.Key(off, i, nil)
 
 	off = int64(binary.BigEndian.Uint64(last))
@@ -333,7 +333,7 @@ func (l *Freelist2) shrinkFile() (err error) {
 		if st == nil {
 			break
 		}
-		off, i := st.OffIndex(l.mask)
+		off, i := st.LastOffIndex(l.mask)
 		last, _ := l.pl.Key(off, i, nil)
 
 		bst := int64(binary.BigEndian.Uint64(last))

@@ -27,7 +27,7 @@ type (
 	}
 )
 
-var (
+const (
 	kvIndexStart = 0x10
 )
 

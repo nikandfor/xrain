@@ -232,7 +232,7 @@ func (b *Bucket) delBucket(root, page int64) error {
 	mask := page - 1
 
 	for st := t.Step(nil, false); st != nil; st = t.Step(st, false) {
-		off, i := st.OffIndex(mask)
+		off, i := st.LastOffIndex(mask)
 		_, F := pl.Key(off, i, nil)
 		if F == 0 {
 			continue
