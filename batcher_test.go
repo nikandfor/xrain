@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nikandfor/json"
 	"github.com/nikandfor/tlog"
 )
 
@@ -21,23 +20,20 @@ type A struct {
 	list []string
 
 	f *os.File
-	w *json.Writer
 	l *tlog.Logger
 }
 
 func NewA() *A {
-	f, err := os.Create("batcher.tlog")
+	f, err := os.Create("batcher.json")
 	if err != nil {
 		panic(err)
 	}
-	w := json.NewStreamWriterBuffer(f, make([]byte, 0x10000))
 
 	a := &A{
 		flushc: make(chan struct{}, 1),
 		stopc:  make(chan struct{}),
 		f:      f,
-		w:      w,
-		l:      tlog.New(tlog.NewJSONWriter(w)),
+		l:      tlog.New(tlog.NewJSONWriter(f)),
 	}
 	a.cond.L = &a.mu
 	return a
@@ -48,11 +44,7 @@ func (a *A) stop() {
 }
 
 func (a *A) Close() {
-	err := a.w.Flush()
-	if err != nil {
-		panic(err)
-	}
-	err = a.f.Close()
+	err := a.f.Close()
 	if err != nil {
 		panic(err)
 	}
