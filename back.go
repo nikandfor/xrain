@@ -33,20 +33,32 @@ func NewMemBack(size int64) *MemBack {
 func (b *MemBack) Access(off, l int64) []byte {
 	b.mu.RLock()
 
+	if off == NilPage || l == 0 {
+		return nil
+	}
+
 	return b.d[off : off+l]
 }
 
 func (b *MemBack) Access2(off, l, off2, l2 int64) (p, p2 []byte) {
 	b.mu.RLock()
 
-	return b.d[off : off+l], b.d[off2 : off2+l2]
+	if off != NilPage && l != 0 {
+		p = b.d[off : off+l]
+	}
+
+	if off2 != NilPage && l2 != 0 {
+		p2 = b.d[off2 : off2+l2]
+	}
+
+	return
 }
 
 func (b *MemBack) Unlock(p []byte) {
 	b.mu.RUnlock()
 }
 
-func (b *MemBack) Unlock2(lp, rp []byte) {
+func (b *MemBack) Unlock2(p, p2 []byte) {
 	b.mu.RUnlock()
 }
 

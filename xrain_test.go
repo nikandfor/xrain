@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
+	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -330,29 +331,43 @@ func (t *HeavyTester) worker(c, r chan HeavyTask) {
 	}
 }
 
-func TestMain(m *testing.M) {
-	var (
-		v   = flag.String("v", "", "verbocity topics")
-		det = flag.Bool("detailed", false, "detailed logs")
-		no  = flag.Bool("no-logs", false, "hide logs")
-	)
+var (
+	v = flag.String("tlog-v", "", "verbocity topics")
 
+//	det = flag.Bool("detailed", false, "detailed logs")
+//	no  = flag.Bool("no-logs", false, "hide logs")
+)
+
+var tl *tlog.Logger
+
+func TestMain(m *testing.M) {
 	flag.Parse()
 
-	if *no {
-		tlog.DefaultLogger = tlog.New(tlog.Discard{})
-	} else {
-		ff := tlog.LstdFlags
-		if *det {
-			ff = tlog.LdetFlags
-		}
+	initLogger(nil)
 
-		tlog.DefaultLogger = tlog.New(tlog.NewConsoleWriter(os.Stderr, ff))
+	os.Exit(m.Run())
+}
+
+type testWriter struct {
+	t *testing.T
+}
+
+func (t testWriter) Write(p []byte) (int, error) {
+	t.t.Logf("%s", p)
+
+	return len(p), nil
+}
+
+func initLogger(t *testing.T) {
+	var w io.Writer = log.Writer()
+
+	if t != nil {
+		w = testWriter{t: t}
 	}
+
+	tl = tlog.New(tlog.NewConsoleWriter(w, 0))
 
 	if *v != "" {
 		tlog.SetFilter(*v)
 	}
-
-	os.Exit(m.Run())
 }

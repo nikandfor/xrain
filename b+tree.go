@@ -39,9 +39,9 @@ type (
 		depth int
 	}
 
-	Stack []Keylink
+	Stack []OffIndex
 
-	Keylink int64
+	OffIndex int64
 )
 
 func NewTree(p PageLayout, root, page int64) *FileTree {
@@ -182,13 +182,13 @@ func (t *FileTree) Seek(st Stack, k []byte) (_ Stack, eq bool) {
 	off := t.root
 	var i, d int
 	for {
-		st = append(st, Keylink(off))
+		st = append(st, OffIndex(off))
 
 		i, eq = t.p.Search(off, k)
 		//	log.Printf("search %2x %q -> %x %v", off, k, i, eq)
 
 		if t.p.IsLeaf(off) {
-			st[d] |= Keylink(i)
+			st[d] |= OffIndex(i)
 			break
 		}
 
@@ -196,7 +196,7 @@ func (t *FileTree) Seek(st Stack, k []byte) (_ Stack, eq bool) {
 			i--
 		}
 
-		st[d] |= Keylink(i)
+		st[d] |= OffIndex(i)
 		d++
 
 		off = t.p.Int64(off, i)
@@ -335,7 +335,7 @@ func (t *FileTree) Step(st Stack, back bool) Stack {
 			} else {
 				i = 0
 			}
-			st = append(st, Keylink(p)|Keylink(i))
+			st = append(st, OffIndex(p)|OffIndex(i))
 
 			if t.p.IsLeaf(p) {
 				return st
@@ -354,14 +354,14 @@ func (t *FileTree) Step(st Stack, back bool) Stack {
 	if back {
 		if i > 0 {
 			i--
-			st[l] = NewKeylink(off, i)
+			st[l] = MakeOffIndex(off, i)
 			return st
 		}
 	} else {
 		n := t.p.NKeys(off)
 		if i+1 < n {
 			i++
-			st[l] = NewKeylink(off, i)
+			st[l] = MakeOffIndex(off, i)
 			return st
 		}
 	}
@@ -385,24 +385,24 @@ func (t *FileTree) Step(st Stack, back bool) Stack {
 		i = 0
 	}
 
-	st[l] = NewKeylink(off, i)
+	st[l] = MakeOffIndex(off, i)
 
 	return st
 }
 
-func NewKeylink(off int64, i int) Keylink {
-	return Keylink(off) | Keylink(i)
+func MakeOffIndex(off int64, i int) OffIndex {
+	return OffIndex(off) | OffIndex(i)
 }
 
-func (l Keylink) Off(mask int64) int64 {
+func (l OffIndex) Off(mask int64) int64 {
 	return int64(l) &^ mask
 }
 
-func (l Keylink) Index(mask int64) int {
+func (l OffIndex) Index(mask int64) int {
 	return int(int64(l) & mask)
 }
 
-func (l Keylink) OffIndex(m int64) (int64, int) {
+func (l OffIndex) OffIndex(m int64) (int64, int) {
 	return l.Off(m), l.Index(m)
 }
 
