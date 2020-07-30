@@ -7,22 +7,22 @@ import (
 
 type (
 	Tx struct {
-		d        *DB
-		b        *Bucket
+		d *DB
+		*SimpleBucket
 		writable bool
 	}
 
-	Bucket struct {
-		tx          *Tx
-		name        []byte
-		par         *Bucket
-		t           Tree
-		pl          PageLayout
-		root        int64
-		page        int64
-		sub         map[string]*Bucket
-		del         bool
-		flagSupport bool
+	SimpleBucket struct {
+		tx    *Tx
+		name  []byte
+		par   *SimpleBucket
+		l     Layout
+		c     Common
+		t     *LayoutShortcut
+		root  int64
+		sub   map[string]*SimpleBucket
+		del   bool
+		flags FlagsSupported
 	}
 )
 
@@ -31,34 +31,35 @@ var (
 	ErrTypeMismatch        = errors.New("value type mismatch")
 )
 
-func newTx(d *DB, t Tree, w bool) Tx {
+func newTx(d *DB, l Layout, root int64, w bool) Tx {
 	tx := Tx{
 		d:        d,
 		writable: w,
 	}
-	tx.b = newBucket(&tx, t, nil, nil)
+	tx.SimpleBucket = newBucket(&tx, l, root, nil, nil)
 
 	return tx
 }
 
-func newBucket(tx *Tx, t Tree, name []byte, par *Bucket) *Bucket {
-	return &Bucket{
-		tx:          tx,
-		name:        name,
-		par:         par,
-		t:           t,
-		pl:          t.PageLayout(),
-		root:        t.Root(),
-		page:        tx.d.page,
-		flagSupport: t.PageLayout().Supports(Flags),
+func newBucket(tx *Tx, l Layout, root int64, name []byte, par *SimpleBucket) *SimpleBucket {
+	ff, _ := l.(FlagsSupported)
+
+	return &SimpleBucket{
+		tx:    tx,
+		name:  name,
+		par:   par,
+		l:     l,
+		t:     NewLayoutShortcut(l, root, tx.c.Mask),
+		root:  root,
+		flags: ff,
 	}
 }
 
-func (b *Bucket) Put(k, v []byte) error {
-	return b.put(k, v, 0)
+func (b *SimpleBucket) Put(k, v []byte) error {
+	return b.put(0, k, v)
 }
 
-func (b *Bucket) put(k, v []byte, F int) error {
+func (b *SimpleBucket) put(F int, k, v []byte) error {
 	if !b.allowed(true) {
 		panic("not allowed")
 	}
@@ -67,11 +68,11 @@ func (b *Bucket) put(k, v []byte, F int) error {
 	}
 
 	ov, oF := b.t.Get(k)
-	if ov != nil && oF != F && b.flagSupport {
+	if ov != nil && oF != F && b.flags != nil {
 		return ErrTypeMismatch
 	}
 
-	_, err := b.t.Put(k, v, F)
+	err := b.t.Put(F, k, v)
 	if err != nil {
 		return err
 	}
@@ -79,11 +80,11 @@ func (b *Bucket) put(k, v []byte, F int) error {
 	return b.propagate()
 }
 
-func (b *Bucket) Get(k []byte) []byte {
+func (b *SimpleBucket) Get(k []byte) []byte {
 	if !b.allowed(false) {
 		panic("not allowed")
 	}
-	if b.root == NilPage {
+	if b.t.Root == NilPage {
 		return nil
 	}
 
@@ -96,11 +97,11 @@ func (b *Bucket) Get(k []byte) []byte {
 	return v
 }
 
-func (b *Bucket) Del(k []byte) error {
+func (b *SimpleBucket) Del(k []byte) error {
 	if !b.allowed(true) {
 		panic("not allowed")
 	}
-	if b.root == NilPage {
+	if b.t.Root == NilPage {
 		return nil
 	}
 
@@ -109,7 +110,7 @@ func (b *Bucket) Del(k []byte) error {
 		return ErrTypeMismatch
 	}
 
-	_, err := b.t.Del(k)
+	err := b.t.Del(k)
 	if err != nil {
 		return err
 	}
@@ -117,11 +118,11 @@ func (b *Bucket) Del(k []byte) error {
 	return b.propagate()
 }
 
-func (b *Bucket) Bucket(k []byte) *Bucket {
+func (b *SimpleBucket) Bucket(k []byte) *SimpleBucket {
 	if !b.allowed(false) {
 		panic("not allowed")
 	}
-	if b.root == NilPage {
+	if b.t.Root == NilPage {
 		return nil
 	}
 
@@ -132,26 +133,33 @@ func (b *Bucket) Bucket(k []byte) *Bucket {
 		}
 	}
 
-	v, F := b.t.Get(k)
-	if v == nil || F == 0 && b.flagSupport {
+	st, eq := b.l.Seek(nil, b.t.Root, k)
+	if !eq {
 		return nil
 	}
 
+	F := 0
+	if b.flags != nil {
+		F = b.flags.Flags(st)
+		if F == 0 {
+			return nil
+		}
+	}
+
+	v := b.l.Value(st, nil)
 	off := int64(binary.BigEndian.Uint64(v))
 
-	t := NewTree(b.pl, off, b.page)
-
-	sub := newBucket(b.tx, t, k, b)
+	sub := newBucket(b.tx, b.l, off, k, b)
 
 	if b.sub == nil {
-		b.sub = make(map[string]*Bucket)
+		b.sub = make(map[string]*SimpleBucket)
 	}
 	b.sub[n] = sub
 
 	return sub
 }
 
-func (b *Bucket) PutBucket(k []byte) (*Bucket, error) {
+func (b *SimpleBucket) PutBucket(k []byte) (*SimpleBucket, error) {
 	if !b.allowed(false) {
 		panic("not allowed")
 	}
@@ -165,30 +173,28 @@ func (b *Bucket) PutBucket(k []byte) (*Bucket, error) {
 
 	v, F := b.t.Get(k)
 	if v != nil {
-		if F == 0 && b.flagSupport {
+		if F == 0 && b.flags != nil {
 			return nil, ErrTypeMismatch
 		}
 	}
 
 	var buf [8]byte
-	err := b.put(k, buf[:], 1)
+	err := b.put(1, k, buf[:])
 	if err != nil {
 		return nil, err
 	}
 
-	t := NewTree(b.pl, NilPage, b.page)
-
-	sub := newBucket(b.tx, t, k, b)
+	sub := newBucket(b.tx, b.l, NilPage, k, b)
 
 	if b.sub == nil {
-		b.sub = make(map[string]*Bucket)
+		b.sub = make(map[string]*SimpleBucket)
 	}
 	b.sub[n] = sub
 
 	return sub, nil
 }
 
-func (b *Bucket) DelBucket(k []byte) error {
+func (b *SimpleBucket) DelBucket(k []byte) error {
 	if !b.allowed(false) {
 		panic("not allowed")
 	}
@@ -203,18 +209,18 @@ func (b *Bucket) DelBucket(k []byte) error {
 	if v == nil {
 		return nil
 	}
-	if F == 0 && b.flagSupport {
+	if F == 0 && b.flags != nil {
 		return ErrTypeMismatch
 	}
 
 	off := int64(binary.BigEndian.Uint64(v))
 
-	err := b.delBucket(off, b.page)
+	err := b.delBucket(off)
 	if err != nil {
 		return err
 	}
 
-	_, err = b.t.Del(k)
+	err = b.t.Del(k)
 	if err != nil {
 		return err
 	}
@@ -226,28 +232,27 @@ func (b *Bucket) DelBucket(k []byte) error {
 	return nil
 }
 
-func (b *Bucket) delBucket(root, page int64) error {
-	pl := b.pl
-	t := NewTree(pl, root, page)
-	mask := page - 1
+func (b *SimpleBucket) delBucket(root int64) error {
+	if b.flags == nil {
+		return b.l.Free(root)
+	}
 
-	for st := t.Step(nil, false); st != nil; st = t.Step(st, false) {
-		off, i := st.LastOffIndex(mask)
-		_, F := pl.Key(off, i, nil)
+	for st := b.l.Step(nil, b.t.Root, false); st != nil; st = b.l.Step(st, b.t.Root, false) {
+		F := b.flags.Flags(st)
 		if F == 0 {
 			continue
 		}
 
-		v := pl.Value(off, i, nil)
+		v := b.l.Value(st, nil)
 		sub := int64(binary.BigEndian.Uint64(v))
 
-		err := b.delBucket(sub, page)
+		err := b.delBucket(sub)
 		if err != nil {
 			return err
 		}
 	}
 
-	err := pl.Free(t.Root(), true)
+	err := b.l.Free(b.t.Root)
 	if err != nil {
 		return err
 	}
@@ -255,26 +260,26 @@ func (b *Bucket) delBucket(root, page int64) error {
 	return nil
 }
 
-func (b *Bucket) allocRoot() error {
-	if b.root != NilPage {
+func (b *SimpleBucket) allocRoot() error {
+	if b.t.Root != NilPage {
 		return nil
 	}
 
-	off, err := b.pl.Alloc(true)
+	off, err := b.l.Alloc()
 	if err != nil {
 		return err
 	}
 
-	b.t.SetRoot(off)
+	b.t.Root = off
 
 	return nil
 }
 
-//func (b *Bucket) Cursor() Cursor { return nil }
+//func (b *SimpleBucket) Cursor() Cursor { return nil }
 
-func (b *Bucket) SetPageLayout(p PageLayout) {
-	b.pl = p
-	b.t.SetPageLayout(p)
+func (b *SimpleBucket) SetLayout(l Layout) {
+	b.l = l
+	b.t.Layout = l
 }
 
 func inc(k []byte) {
@@ -286,8 +291,8 @@ func inc(k []byte) {
 	}
 }
 
-func (b *Bucket) propagate() error {
-	root := b.t.Root()
+func (b *SimpleBucket) propagate() error {
+	root := b.t.Root
 	if b.par == nil || root == b.root {
 		b.root = root
 		return nil
@@ -295,7 +300,7 @@ func (b *Bucket) propagate() error {
 
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(root))
-	err := b.par.put([]byte(b.name), buf[:], 1)
+	err := b.par.put(1, []byte(b.name), buf[:])
 	if err != nil {
 		return err
 	}
@@ -305,14 +310,17 @@ func (b *Bucket) propagate() error {
 	return nil
 }
 
-func (b *Bucket) allowed(w bool) bool {
-	return !b.del && (b.tx.IsWritable() || !w)
+func (b *SimpleBucket) allowed(w bool) bool {
+	return !b.del && (!w || b.tx.writable)
 }
 
-func (tx *Tx) IsWritable() bool                    { return tx.writable }
+func (tx *Tx) IsWritable() bool { return tx.writable }
+
+/*
 func (tx *Tx) Get(k []byte) []byte                 { return tx.b.Get(k) }
 func (tx *Tx) Put(k, v []byte) error               { return tx.b.Put(k, v) }
 func (tx *Tx) Del(k []byte) error                  { return tx.b.Del(k) }
-func (tx *Tx) Bucket(k []byte) *Bucket             { return tx.b.Bucket(k) }
+func (tx *Tx) Bucket(k []byte) *SimpleBucket             { return tx.b.Bucket(k) }
 func (tx *Tx) PutBucket(k []byte) (*Bucket, error) { return tx.b.PutBucket(k) }
 func (tx *Tx) DelBucket(k []byte) error            { return tx.b.DelBucket(k) }
+*/

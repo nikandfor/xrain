@@ -40,7 +40,7 @@ func TestTxBucket(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	tlog.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.ver, db.keep, db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(db.t.PageLayout()))
+	tlog.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.c.Ver, db.c.Keep, db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
 
 	err = db.Update(func(tx *Tx) error {
 		b0 := tx.Bucket([]byte("bucket00"))
@@ -94,5 +94,6 @@ func TestTxBucket(t *testing.T) {
 	l, r := b.Access2(0, 0x40, Page, 0x40)
 	tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 	b.Unlock2(l, r)
-	tlog.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.ver, db.keep, db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(db.t.PageLayout()))
+
+	tlog.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.c.Ver, db.c.Keep, db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
 }

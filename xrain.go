@@ -1,13 +1,10 @@
 package xrain
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc64"
-	"log"
-	"strings"
 	"sync"
 )
 
@@ -36,22 +33,35 @@ var ( // errors
 type (
 	DB struct {
 		b     Back
-		fl    Freelist
-		t, tr Tree
 		batch *Batcher
+
+		l    Layout
+		root int64
+		c    Common
+		//rc   *Common
 
 		NoSync bool
 
-		page int64
-
-		mu        sync.Mutex
-		ver, verp int64
-		keep      int64
-		keepl     map[int64]int
+		mu    sync.Mutex
+		okver int64
+		keepl map[int64]int
 
 		safe, write int64
 
 		wmu sync.Mutex
+	}
+
+	Common struct {
+		Back
+
+		Page, Mask int64
+		Ver, Keep  int64
+
+		FileNext int64
+
+		Freelist
+
+		Meta Layout
 	}
 
 	Serializer interface {
@@ -60,29 +70,32 @@ type (
 	}
 )
 
-func NewDB(b Back, page int64, pl PageLayout) (*DB, error) {
-	if pl == nil {
-		pl = NewFixedLayout(b, page, nil)
-	} else {
-		pl.SetPageSize(page)
-	}
-
-	t := NewTree(pl, 4*page, page)
-
-	fpl := NewFixedLayout(b, page, nil)
-	flt := NewTree(fpl, 5*page, page)
-	fl := NewFreelist2(b, flt, 6*page, page)
-
-	pl.SetFreelist(fl)
-	fpl.SetFreelist(fl)
-
+func NewDB(b Back, page int64, l Layout) (*DB, error) {
 	d := &DB{
-		b:     b,
-		fl:    fl,
-		t:     t,
-		page:  page,
+		l: l,
+		c: Common{
+			Back: b,
+			Page: page,
+			Mask: page - 1,
+			Keep: -1,
+		},
 		keepl: make(map[int64]int),
 	}
+
+	if l == nil {
+		d.l = NewKVLayout2(&d.c)
+	}
+
+	/*
+		t := NewTree(pl, 4*page, page)
+
+		fpl := NewFixedLayout(b, page, nil)
+		flt := NewTree(fpl, 5*page, page)
+		fl := NewFreelist2(b, flt, 6*page, page)
+
+		pl.SetFreelist(fl)
+		fpl.SetFreelist(fl)
+	*/
 
 	var err error
 	if b.Size() == 0 {
@@ -94,7 +107,7 @@ func NewDB(b Back, page int64, pl PageLayout) (*DB, error) {
 		return nil, err
 	}
 
-	d.tr = NewTree(pl, d.t.Root(), d.page)
+	// d.tr = NewTree(pl, d.t.Root(), d.page)
 
 	d.batch = NewBatcher(&d.wmu, d.sync)
 	go d.batch.Run()
@@ -104,24 +117,22 @@ func NewDB(b Back, page int64, pl PageLayout) (*DB, error) {
 
 func (d *DB) View(f func(tx *Tx) error) error {
 	d.mu.Lock()
-	tr := d.tr
-	ver := d.ver
+	root := d.root
+	ver := d.okver
 	d.keepl[ver]++
 	//	tlog.Printf("View      %2d  %v", ver, d.keepl)
 	d.mu.Unlock()
 
 	defer func() {
 		d.mu.Lock()
-		c := d.keepl[ver]
-		if c == 1 {
+		d.keepl[ver]--
+		if d.keepl[ver] == 0 {
 			delete(d.keepl, ver)
-		} else {
-			d.keepl[ver]--
 		}
 		d.mu.Unlock()
 	}()
 
-	tx := newTx(d, tr, false)
+	tx := newTx(d, d.l, root, false)
 
 	return f(&tx)
 }
@@ -134,21 +145,18 @@ func (d *DB) Update(f func(tx *Tx) error) error {
 	}
 }
 
+// synchronized calls
 func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	defer d.wmu.Unlock()
 	d.wmu.Lock()
 
 	d.mu.Lock()
 	d.updateKeep()
-	ver, keep := d.ver, d.keep
+	d.c.Ver++
 	write := d.write
 	d.mu.Unlock()
-	ver++
 
-	d.fl.SetVer(ver, keep)
-	d.t.PageLayout().SetVer(ver)
-
-	tx := newTx(d, d.t, true)
+	tx := newTx(d, d.l, d.root, true)
 
 	err = f(&tx)
 	if err != nil {
@@ -157,11 +165,9 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 
 	d.writeRoot(write)
 
-	tr := d.t.Copy()
-
 	d.mu.Lock()
-	d.ver++
-	d.tr = tr
+	d.okver = d.c.Ver
+	d.root = tx.root
 	d.write++
 	d.safe++
 	d.mu.Unlock()
@@ -178,21 +184,18 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	return nil
 }
 
+// synchronized updates, parallel Sync
 func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	defer d.batch.Unlock()
 	batch := d.batch.Lock()
 
 	d.mu.Lock()
 	d.updateKeep()
-	d.verp++
-	ver, keep := d.verp, d.keep
+	d.c.Ver++
 	write := d.write
 	d.mu.Unlock()
 
-	d.fl.SetVer(ver, keep)
-	d.t.PageLayout().SetVer(ver)
-
-	tx := newTx(d, d.t, true)
+	tx := newTx(d, d.l, d.root, true)
 
 	err = f(&tx)
 	if err != nil {
@@ -203,18 +206,15 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 
 	d.writeRoot(write)
 
+	d.mu.Lock()
+	d.okver = d.c.Ver
+	d.root = tx.root
+	d.mu.Unlock()
+
 	err = d.batch.Wait(batch)
 	if err != nil {
 		return err
 	}
-
-	d.mu.Lock()
-	//	tlog.Printf("Update %2d %2d  %2d exit", ver, d.ver, batch)
-	if ver > d.ver {
-		d.ver = ver
-		d.tr = d.t.Copy()
-	}
-	d.mu.Unlock()
 
 	return nil
 }
@@ -237,26 +237,28 @@ func (d *DB) sync() error {
 }
 
 func (d *DB) updateKeep() {
-	min := d.ver
+	min := d.c.Ver
 	for k := range d.keepl {
 		if k < min {
 			min = k
 		}
 	}
-	d.keep = min
+	d.c.Keep = min
 }
 
-func (d *DB) writeRoot(ver int64) {
-	n := ver & 0x3
+func (d *DB) writeRoot(writepage int64) {
+	n := writepage & 0x3
 
-	p := d.b.Access(n*d.page, d.page)
+	p := d.b.Access(n*d.c.Page, d.c.Page)
 
-	binary.BigEndian.PutUint64(p[0x20:], uint64(ver))
+	binary.BigEndian.PutUint64(p[0x20:], uint64(d.c.Ver))
 
-	s := 0x30
-	s += d.fl.Serialize(p[s:])
-	s += d.t.Serialize(p[s:])
-	_ = s
+	/*
+		s := 0x30
+		s += d.fl.Serialize(p[s:])
+		s += d.t.Serialize(p[s:])
+		_ = s
+	*/
 
 	binary.BigEndian.PutUint64(p[0x10:], 0)
 
@@ -267,32 +269,29 @@ func (d *DB) writeRoot(ver int64) {
 }
 
 func (d *DB) initEmpty() (err error) {
-	if d.page == 0 {
-		d.page = DefaultPageSize
+	if d.c.Page == 0 {
+		d.c.Page = DefaultPageSize
 	}
 
-	d.fl.SetPageSize(d.page)
-	d.t.SetPageSize(d.page)
-
-	err = d.b.Truncate(6 * d.page)
+	err = d.b.Truncate(6 * d.c.Page)
 	if err != nil {
 		return
 	}
 
-	h0 := fmt.Sprintf("xrain%3s%7x\n", Version, d.page)
+	h0 := fmt.Sprintf("xrain%3s%7x\n", Version, d.c.Page)
 	if len(h0) != 16 {
 		panic(len(h0))
 	}
 
-	p := d.b.Access(0, 4*d.page)
+	p := d.b.Access(0, 4*d.c.Page)
 
 	for i := 0; i < 4; i++ {
-		off := int64(i) * d.page
+		off := int64(i) * d.c.Page
 
 		copy(p[off:], h0)
 
 		s := off + 0x18
-		binary.BigEndian.PutUint64(p[s:], uint64(d.page))
+		binary.BigEndian.PutUint64(p[s:], uint64(d.c.Page))
 	}
 
 	d.b.Unlock(p)
@@ -303,38 +302,38 @@ func (d *DB) initEmpty() (err error) {
 }
 
 func (d *DB) initExisting() (err error) {
-	if d.page == 0 {
-		d.page = 0x100
+	if d.c.Page == 0 {
+		d.c.Page = 0x100
 	}
 
 	var zeros [8]byte
 
 again:
 	retry := false
-	p := d.b.Access(0, 4*d.page)
+	p := d.b.Access(0, 4*d.c.Page)
 	func() {
 		page := int64(binary.BigEndian.Uint64(p[0x18:]))
-		if page != d.page {
-			d.page = page
+		if page != d.c.Page {
+			d.c.Page = page
 			retry = true
 			return
 		}
 
-		d.ver = 0
+		d.c.Ver = 0
 		var latest int64
 		for i := 0; i < 4; i++ {
-			off := int64(i) * d.page
+			off := int64(i) * d.c.Page
 			ver := int64(binary.BigEndian.Uint64(p[off+0x20:]))
-			if ver > d.ver {
+			if ver > d.c.Ver {
 				latest = off
-				d.ver = ver
+				d.c.Ver = ver
 				d.safe = int64(i)
 				d.write = d.safe + 1
 			}
 		}
-		p = p[latest : latest+d.page]
+		p = p[latest : latest+d.c.Page]
 
-		d.verp = d.ver
+		d.okver = d.c.Ver
 
 		sum := crc64.Update(0, CRCTable, p[:0x10])
 		sum = crc64.Update(sum, CRCTable, zeros[:])
@@ -345,22 +344,24 @@ again:
 			return
 		}
 
-		d.fl.SetPageSize(d.page)
-		d.t.SetPageSize(d.page)
+		/*
+			d.fl.SetPageSize(d.c.Page)
+			d.t.SetPageSize(d.c.Page)
 
-		// p is last root page
-		s := 0x30
-		ss, err := d.fl.Deserialize(p[s:])
-		if err != nil {
-			return
-		}
-		s += ss
+			// p is last root page
+			s := 0x30
+			ss, err := d.fl.Deserialize(p[s:])
+			if err != nil {
+				return
+			}
+			s += ss
 
-		ss, err = d.t.Deserialize(p[s:])
-		if err != nil {
-			return
-		}
-		s += ss
+			ss, err = d.t.Deserialize(p[s:])
+			if err != nil {
+				return
+			}
+			s += ss
+		*/
 	}()
 	d.b.Unlock(p)
 	if retry {
@@ -370,7 +371,7 @@ again:
 	return
 }
 
-//
+/*
 
 func checkPage(l PageLayout, off int64) {
 	n := l.NKeys(off)
@@ -517,3 +518,4 @@ func assert0(c bool, f string, args ...interface{}) {
 
 	panic(fmt.Sprintf(f, args...))
 }
+*/

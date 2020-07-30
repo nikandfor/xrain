@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"hash/crc32"
 	"sort"
+	"strings"
 )
 
 type (
 	Layout interface {
+		SetCommon(*Common)
+
+		Alloc() (int64, error)
+		Free(root int64) error
+
 		Seek(s Stack, root int64, k []byte) (Stack, bool)
 		Step(s Stack, root int64, back bool) Stack
 
@@ -20,15 +27,8 @@ type (
 		Delete(st Stack) (Stack, error)
 	}
 
-	Common struct {
-		Back
-
-		Page, Mask int64
-		Ver, Keep  int64
-
-		Freelist
-
-		Meta Layout
+	FlagsSupported interface {
+		Flags(Stack) int
 	}
 
 	BaseLayout2 struct {
@@ -38,7 +38,19 @@ type (
 	KVLayout2 struct {
 		BaseLayout2
 	}
+
+	Stack []OffIndex
+
+	OffIndex int64
+
+	fileDumper interface {
+		dumpFile() string
+	}
 )
+
+const NilPage = -1
+
+const kvIndexStart = 0x10
 
 var _ Layout = &KVLayout2{}
 
@@ -56,6 +68,14 @@ func (l *BaseLayout2) setleaf(p []byte, y bool) {
 
 func (l *BaseLayout2) nkeys(p []byte) int {
 	return int(p[4])&^0x80<<8 | int(p[5])
+}
+
+func (l *BaseLayout2) nKeys(off int64) (n int) {
+	p := l.Access(off, 0x10)
+	n = l.nkeys(p)
+	l.Unlock(p)
+
+	return n
 }
 
 func (l *BaseLayout2) setnkeys(p []byte, n int) {
@@ -99,12 +119,12 @@ func (l *BaseLayout2) crccalc(p []byte) {
 }
 
 func (l *BaseLayout2) realloc(off, ver int64, oldn, n int) (noff int64, err error) {
-	err = l.Free(oldn, off, ver)
+	err = l.Freelist.Free(off, ver, oldn)
 	if err != nil {
 		return
 	}
 
-	noff, err = l.Alloc(n)
+	noff, err = l.Freelist.Alloc(n)
 	if err != nil {
 		return
 	}
@@ -118,6 +138,24 @@ func (l *BaseLayout2) realloc(off, ver int64, oldn, n int) (noff int64, err erro
 	l.Unlock2(d, s)
 
 	return
+}
+
+func (l *BaseLayout2) SetCommon(c *Common) { l.Common = c }
+
+func (l *BaseLayout2) Alloc() (int64, error) {
+	off, err := l.Freelist.Alloc(1)
+	if err != nil {
+		return NilPage, err
+	}
+
+	p := l.Access(off, 0x10)
+	l.setleaf(p, true)
+	l.setnkeys(p, 0)
+	l.setoverflow(p, 0)
+	l.setver(p, l.Ver)
+	l.Unlock(p)
+
+	return off, nil
 }
 
 func NewKVLayout2(c *Common) *KVLayout2 {
@@ -178,14 +216,6 @@ func (l *KVLayout2) expectedsize(p []byte, i, n int, k, v []byte) int {
 	return 2 + 1 + 1 + len(k) + len(v) + vallink
 }
 
-func (l *KVLayout2) nKeys(off int64) (n int) {
-	p := l.Access(off, 0x10)
-	n = l.nkeys(p)
-	l.Unlock(p)
-
-	return n
-}
-
 func (l *KVLayout2) link(st Stack) (off int64) {
 	var buf [8]byte
 
@@ -196,12 +226,52 @@ func (l *KVLayout2) link(st Stack) (off int64) {
 	return off
 }
 
+func (l *KVLayout2) Free(off int64) error {
+	p := l.Access(off, 0x10)
+	pages := 1 + l.overflow(p)
+	ver := l.pagever(p)
+	rec := !l.isleaf(p)
+	var sub []int64
+	if rec {
+		n := l.nkeys(p)
+		sub = make([]int64, n)
+		for i := range sub {
+			v := l.value(off, i, nil)
+			sub[i] = int64(binary.BigEndian.Uint64(v))
+		}
+	}
+	l.Unlock(p)
+
+	err := l.Freelist.Free(off, ver, pages)
+	if err != nil {
+		return err
+	}
+
+	for _, off := range sub {
+		err = l.Free(off)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (l *KVLayout2) Flags(st Stack) int {
+	return 0
+}
+
 func (l *KVLayout2) Key(st Stack, buf []byte) ([]byte, int) {
 	return buf, 0
 }
 
 func (l *KVLayout2) Value(st Stack, buf []byte) []byte {
-	return buf
+	off, i := st.LastOffIndex(l.Mask)
+	return l.value(off, i, nil)
+}
+
+func (l *KVLayout2) value(off int64, i int, buf []byte) []byte {
+	return nil
 }
 
 func (l *KVLayout2) Insert(st Stack, ff int, k, v []byte) (_ Stack, err error) {
@@ -441,6 +511,54 @@ func (l *KVLayout2) delete(off int64, i int) {}
 
 func (l *KVLayout2) pageDelete(p []byte, i, n int) {}
 
+func (l *KVLayout2) search(off int64, k []byte) (i, n int, coff int64, eq, isleaf bool) {
+	pages := 1
+
+again:
+	p := l.Access(off, l.Page*int64(pages))
+	if o := l.overflow(p); o+1 != pages {
+		l.Unlock(p)
+
+		pages = 1 + o
+
+		goto again
+	}
+
+	n = l.nkeys(p)
+
+	keycmp := func(i int) int {
+		dst := l.dataoff(p, i)
+		//	iF := int(p[dst])
+		kl := int(p[dst+1])
+		dst += 2
+
+		ik := p[dst : dst+kl]
+
+		return bytes.Compare(ik, k)
+	}
+
+	i = sort.Search(n, func(i int) bool {
+		return keycmp(i) >= 0
+	})
+
+	eq = i < n && keycmp(i) == 0
+	isleaf = l.isleaf(p)
+
+	if !isleaf {
+		dst := l.dataoff(p, i)
+		dend := l.dataend(p, i)
+		kl := int(p[dst+1])
+		dst += 2
+
+		v := p[dst+kl : dend]
+		coff = int64(binary.BigEndian.Uint64(v))
+	}
+
+	l.Unlock(p)
+
+	return
+}
+
 func (l *KVLayout2) Seek(st Stack, root int64, k []byte) (_ Stack, eq bool) {
 	st = st[:0]
 
@@ -448,58 +566,10 @@ func (l *KVLayout2) Seek(st Stack, root int64, k []byte) (_ Stack, eq bool) {
 	var isleaf bool
 	var i, n, d int
 
-	search := func(off int64, k []byte) {
-		pages := 1
-
-	again:
-		p := l.Access(off, l.Page*int64(pages))
-		if o := l.overflow(p); o+1 != pages {
-			l.Unlock(p)
-
-			pages = 1 + o
-
-			goto again
-		}
-
-		n = l.nkeys(p)
-
-		keycmp := func(i int) int {
-			dst := l.dataoff(p, i)
-			//	iF := int(p[dst])
-			kl := int(p[dst+1])
-			dst += 2
-
-			ik := p[dst : dst+kl]
-
-			return bytes.Compare(ik, k)
-		}
-
-		i := sort.Search(n, func(i int) bool {
-			return keycmp(i) >= 0
-		})
-
-		eq = i < n && keycmp(i) == 0
-		isleaf = l.isleaf(p)
-
-		if !isleaf {
-			dst := l.dataoff(p, i)
-			dend := l.dataend(p, i)
-			kl := int(p[dst+1])
-			dst += 2
-
-			v := p[dst+kl : dend]
-			off = int64(binary.BigEndian.Uint64(v))
-		}
-
-		l.Unlock(p)
-
-		return
-	}
-
 	for {
 		st = append(st, OffIndex(off))
 
-		search(off, k)
+		i, n, off, eq, isleaf = l.search(off, k)
 		//	log.Printf("search %2x %q -> %x %v", off, k, i, eq)
 
 		if isleaf {
@@ -530,7 +600,6 @@ func (l *KVLayout2) firstLast(st Stack, root int64, back bool) Stack {
 
 	again:
 		p := l.Access(off, l.Page*int64(pages))
-
 		func() {
 			n := l.nkeys(p)
 			if n == 0 {
@@ -572,7 +641,6 @@ func (l *KVLayout2) firstLast(st Stack, root int64, back bool) Stack {
 			v := p[dst+kl : dend]
 			off = int64(binary.BigEndian.Uint64(v))
 		}()
-
 		l.Unlock(p)
 
 		if reaccess {
@@ -736,7 +804,7 @@ func (l *KVLayout2) out(st Stack, off0, off1 int64) (_ Stack, err error) {
 	}
 
 	if off1 != NilPage {
-		off, err := l.Alloc(1)
+		off, err := l.Freelist.Alloc(1)
 		if err != nil {
 			return nil, err
 		}
@@ -781,4 +849,91 @@ func (l *KVLayout2) out(st Stack, off0, off1 int64) (_ Stack, err error) {
 	}
 
 	return st, nil
+}
+
+func MakeOffIndex(off int64, i int) OffIndex {
+	return OffIndex(off) | OffIndex(i)
+}
+
+func (l OffIndex) Off(mask int64) int64 {
+	return int64(l) &^ mask
+}
+
+func (l OffIndex) Index(mask int64) int {
+	return int(int64(l) & mask)
+}
+
+func (l OffIndex) OffIndex(m int64) (int64, int) {
+	return l.Off(m), l.Index(m)
+}
+
+func (st Stack) LastOffIndex(m int64) (int64, int) {
+	last := st[len(st)-1]
+	return last.Off(m), last.Index(m)
+}
+
+func (l *KVLayout2) dumpPage(off int64) string {
+	var buf bytes.Buffer
+
+	var isleaf bool
+	var n int
+
+	p := l.Access(off, l.Page)
+	{
+		isleaf = l.isleaf(p)
+		tp := 'B'
+		if isleaf {
+			tp = 'D'
+		}
+		ver := l.pagever(p)
+		over := l.overflow(p)
+		n = l.nkeys(p)
+		fmt.Fprintf(&buf, "%4x: %c over %2d ver %3d  nkeys %4d  ", off, tp, over, ver, n)
+		fmt.Fprintf(&buf, "datasize %3x free space %3x\n", l.pagedatasize(p, 0, n), l.pagefree(p, n))
+	}
+	l.Unlock(p)
+
+	st := Stack{0}
+
+	for i := 0; i < n; i++ {
+		st[0] = MakeOffIndex(off, i)
+		k, _ := l.Key(st, nil)
+
+		if isleaf {
+			v := l.Value(st, nil)
+			fmt.Fprintf(&buf, "    %2x -> %2x  | %q -> %q\n", k, v, k, v)
+		} else {
+			v := l.link(st)
+			fmt.Fprintf(&buf, "    %2x -> %4x  | %q\n", k, v, k)
+		}
+	}
+
+	return buf.String()
+}
+
+func (l *KVLayout2) dumpFile() string {
+	var buf strings.Builder
+
+	b := l.Back
+	off := int64(0)
+
+	p := b.Access(off, 0x10)
+	if bytes.HasPrefix(p, []byte("xrain")) {
+		off = 4 * l.Page
+	}
+	b.Unlock(p)
+
+	for off < b.Size() {
+		p := b.Access(off, 0x10)
+		ps := 1 + l.overflow(p)
+		b.Unlock(p)
+
+		s := l.dumpPage(off)
+
+		buf.WriteString(s)
+
+		off += int64(ps) * l.Page
+	}
+
+	return buf.String()
 }

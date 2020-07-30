@@ -1,3 +1,5 @@
+// +build ignore
+
 package xrain
 
 import (
@@ -588,7 +590,7 @@ again:
 	}
 
 	if rfree {
-		err = l.free.Free(1, roff, rver)
+		err = l.free.Free(roff, rver, 1)
 		if err != nil {
 			return
 		}

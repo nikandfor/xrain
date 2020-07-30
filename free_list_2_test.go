@@ -71,9 +71,15 @@ func TestFreelist2AllowGrow1(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, nil)
-	tr := NewTree(pl, 0, Page)
-	fl := NewFreelist2(b, tr, Page, Page)
+	c := &Common{
+		Back:     b,
+		Page:     Page,
+		Mask:     Page - 1,
+		FileNext: Page,
+	}
+
+	l := NewFixedLayout(c)
+	fl := NewFreelist2(c, l, 0)
 
 	//	fl.SetVer(1, 0)
 
@@ -88,9 +94,15 @@ func TestFreelist2AllowGrow2(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, nil)
-	tr := NewTree(pl, 0, Page)
-	fl := NewFreelist2(b, tr, Page, Page)
+	c := &Common{
+		Back:     b,
+		Page:     Page,
+		Mask:     Page - 1,
+		FileNext: Page,
+	}
+
+	l := NewFixedLayout(c)
+	fl := NewFreelist2(c, l, 0)
 
 	off, err := fl.Alloc(1)
 	assert.NoError(t, err)
@@ -111,23 +123,25 @@ func TestFreelist2AllowGrow2(t *testing.T) {
 
 func TestFreelist2AllocPow(t *testing.T) {
 	const Page = 0x80
-	const Mask = Page - 1
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, nil)
-	tr := NewTree(pl, 0, Page)
-	fl := NewFreelist2(b, tr, Page, Page)
+	c := &Common{
+		Back:     b,
+		Page:     Page,
+		Mask:     Page - 1,
+		Ver:      1,
+		FileNext: Page,
+	}
 
-	pl.SetFreelist(fl)
-	fl.SetVer(1, -1)
+	l := NewFixedLayout(c)
+	fl := NewFreelist2(c, l, 0)
 
 	off, err := fl.Alloc(8)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(8*Page), off, "%x != %x", 8*Page, off)
 
 	// first page is freed now, but it can't be allocated yet
-
-	st := tr.Step(nil, false)
+	st := fl.t.First(nil)
 	assert.NotNil(t, st, "non-nil freelist expected")
 
 	off, err = fl.Alloc(2)
@@ -138,8 +152,7 @@ func TestFreelist2AllocPow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(4*Page), off, "%x != %x", 4*Page, off)
 
-	dump, psz := dumpPage(pl, tr.root)
-	tlog.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
+	tlog.Printf("dump: root %x (page size %x)\n%v", fl.t.Root, Page, l.dumpPage(fl.t.Root))
 
 	off, err = fl.Alloc(4)
 	assert.NoError(t, err)
@@ -149,19 +162,18 @@ func TestFreelist2AllocPow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(6*Page), off, "%x != %x", 6*Page, off)
 
-	st = tr.Step(nil, false)
+	st = fl.t.First(nil)
 	if !assert.NotNil(t, st, "nil freelist expected") {
 		return
 	}
-	off, i := st.LastOffIndex(Mask)
-	next, _ := pl.Key(off, i, nil)
+
+	next, _ := l.Key(st, nil)
 	assert.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0}, next)
-	st = tr.Step(st, false)
+	st = fl.t.Step(st, NilPage, false)
 	assert.Nil(t, st, "nil freelist expected")
 
 	if t.Failed() {
-		dump, psz = dumpPage(pl, tr.root)
-		tlog.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
+		tlog.Printf("dump: root %x (page size %x)\n%v", fl.t.Root, Page, l.dumpPage(fl.t.Root))
 	}
 }
 
@@ -169,12 +181,16 @@ func TestFreelist2Alloc2(t *testing.T) {
 	const Page = 0x80
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, nil)
-	tr := NewTree(pl, 0, Page)
-	fl := NewFreelist2(b, tr, Page, Page)
+	c := &Common{
+		Back:     b,
+		Page:     Page,
+		Mask:     Page - 1,
+		Ver:      1,
+		FileNext: Page,
+	}
 
-	pl.SetFreelist(fl)
-	fl.SetVer(1, -1)
+	l := NewFixedLayout(c)
+	fl := NewFreelist2(c, l, 0)
 
 	off, err := fl.Alloc(5)
 	assert.NoError(t, err)
@@ -198,8 +214,7 @@ func TestFreelist2Alloc2(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(6*Page), off, "%x != %x", 6*Page, off)
 
-	dump, psz := dumpPage(pl, tr.root)
-	tlog.Printf("dump: root %x (page size %x)\n%v", tr.root, psz, dump)
+	tlog.Printf("dump: root %x (page size %x)\n%v", fl.t.Root, Page, l.dumpPage(fl.t.Root))
 }
 
 func TestFreelist2Auto(t *testing.T) {
@@ -210,11 +225,16 @@ func TestFreelist2Auto(t *testing.T) {
 	rnd := rand.New(rand.NewSource(0))
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, nil)
-	tr := NewTree(pl, 0, Page)
-	fl := NewFreelist2(b, tr, Page, Page)
+	c := &Common{
+		Back:     b,
+		Page:     Page,
+		Mask:     Page - 1,
+		Ver:      1,
+		FileNext: Page,
+	}
 
-	pl.SetFreelist(fl)
+	l := NewFixedLayout(c)
+	fl := NewFreelist2(c, l, 0)
 
 	type mem struct {
 		off int64
@@ -224,8 +244,8 @@ func TestFreelist2Auto(t *testing.T) {
 
 	check := func(pr bool) {
 		var tree, free, used int64
-		pages := make([]byte, fl.next/Page)
-		sizes := make([]byte, fl.next/Page)
+		pages := make([]byte, fl.FileNext/Page)
+		sizes := make([]byte, fl.FileNext/Page)
 		for i := range pages {
 			pages[i] = '_'
 			sizes[i] = ' '
@@ -233,9 +253,15 @@ func TestFreelist2Auto(t *testing.T) {
 
 		var walk func(int64)
 		walk = func(r int64) {
+			var isleaf bool
+			var n int
+
 			p := b.Access(r, 0x10)
 			{
-				ext := 1 + pl.overflow(p)
+				isleaf = l.isleaf(p)
+				n = l.nkeys(p)
+
+				ext := 1 + l.overflow(p)
 				tree += 1 << nsize(ext)
 
 				i := 0
@@ -249,23 +275,21 @@ func TestFreelist2Auto(t *testing.T) {
 			}
 			b.Unlock(p)
 
-			if pl.IsLeaf(r) {
+			if isleaf {
 				return
 			}
 
-			n := pl.NKeys(r)
 			for i := 0; i < n; i++ {
-				walk(pl.Int64(r, i))
+				walk(l.link(Stack{MakeOffIndex(r, i)}))
 			}
 		}
-		walk(tr.root)
+		walk(fl.t.Root)
 
-		for st := tr.Step(nil, false); st != nil; st = tr.Step(st, false) {
-			poff, pi := st.LastOffIndex(fl.mask)
-			k, _ := pl.Key(poff, pi, nil)
+		for st := fl.t.Step(nil, fl.t.Root, false); st != nil; st = fl.t.Step(st, fl.t.Root, false) {
+			k, _ := l.Key(st, nil)
 
 			off := int64(binary.BigEndian.Uint64(k))
-			size := uint(off & fl.mask)
+			size := uint(off & c.Mask)
 
 			free += 1 << size
 
@@ -293,25 +317,25 @@ func TestFreelist2Auto(t *testing.T) {
 
 		if pr {
 			tlog.Printf("in use: %x", alloc)
-			tlog.Printf("dump root %x next %x  ver %x %x", tr.root, fl.next, fl.ver, fl.keep)
-			tlog.Printf("pages %s <- %x = %x * %x", pages, fl.next, fl.next/Page, Page)
+			tlog.Printf("dump root %x next %x  ver %x %x", fl.t.Root, fl.FileNext, c.Ver, c.Keep)
+			tlog.Printf("pages %s <- %x = %x * %x", pages, fl.FileNext, fl.FileNext/Page, Page)
 			tlog.Printf("sizes %s", sizes)
-			//	tlog.Printf("%v", dumpFile(pl))
+			//	tlog.Printf("%v", l.dumpFile())
 		}
 
-		frac := float64(free) / float64(fl.next/Page)
-		if tree+free+used != fl.next/Page {
-			t.Errorf("tree %x + free %x (%.2f) + used %x != file size %x", tree, free, frac, used, fl.next/Page)
+		frac := float64(free) / float64(fl.FileNext/Page)
+		if tree+free+used != fl.FileNext/Page {
+			t.Errorf("tree %x + free %x (%.2f) + used %x != file size %x", tree, free, frac, used, fl.FileNext/Page)
 		} else if pr {
-			log.Printf("tree %x + free %x (%.2f) + used %x == file size %x", tree, free, frac, used, fl.next/Page)
+			log.Printf("tree %x + free %x (%.2f) + used %x == file size %x", tree, free, frac, used, fl.FileNext/Page)
 		}
 	}
 
 	check(prEach)
 
 	for ver := int64(1); ver <= N; ver++ {
-		pl.SetVer(ver)
-		fl.SetVer(ver, ver-1)
+		c.Ver = ver
+		c.Keep = ver - 1
 
 		if rnd.Intn(3) == 0 {
 			n := rnd.Intn(1<<M-1) + 1
@@ -325,11 +349,11 @@ func TestFreelist2Auto(t *testing.T) {
 			}
 			alloc = append(alloc, mem{off: off, n: n})
 
-			//	log.Printf("alloced %d at %x, next: %x", n, off, fl.next)
+			//	log.Printf("alloced %d at %x, next: %x", n, off, fl.FileNext)
 			p := b.Access(off, 0x10)
-			pl.setver(p, ver) //nolint:scopelint
-			pl.setoverflow(p, n-1)
-			pl.setnkeys(p, 0)
+			l.setver(p, ver) //nolint:scopelint
+			l.setoverflow(p, n-1)
+			l.setnkeys(p, 0)
 			b.Unlock(p)
 		} else if len(alloc) != 0 {
 			i := rand.Intn(len(alloc))
@@ -340,10 +364,10 @@ func TestFreelist2Auto(t *testing.T) {
 
 			var ver int64
 			p := b.Access(m.off, 0x10)
-			ver = pl.getver(p)
+			ver = l.pagever(p)
 			b.Unlock(p)
 
-			err := fl.Free(m.n, m.off, ver)
+			err := fl.Free(m.off, ver, m.n)
 			if !assert.NoError(t, err) {
 				break
 			}
@@ -368,64 +392,69 @@ func TestFreelistShrinkFile(t *testing.T) {
 	const Page = 0x100
 
 	b := NewMemBack(1 * Page)
-	pl := NewFixedLayout(b, Page, nil)
-	tr := NewTree(pl, 0, Page)
-	fl := NewFreelist2(b, tr, Page, Page)
+	c := &Common{
+		Back:     b,
+		Page:     Page,
+		Mask:     Page - 1,
+		Ver:      1,
+		FileNext: Page,
+	}
 
-	pl.SetFreelist(fl)
+	l := NewFixedLayout(c)
+	fl := NewFreelist2(c, l, 0)
 
-	fl.SetVer(1, -1)
+	c.Ver, c.Keep = 1, -1
 	off1, err := fl.Alloc(1)
 	assert.NoError(t, err)
 
-	fl.SetVer(2, 1)
+	c.Ver, c.Keep = 2, 1
 	off2, err := fl.Alloc(2)
 	assert.NoError(t, err)
 
-	fl.SetVer(3, 1)
+	c.Ver, c.Keep = 3, 1
 	off3, err := fl.Alloc(1)
 	assert.NoError(t, err)
 
-	fl.SetVer(4, 2)
+	c.Ver, c.Keep = 4, 2
 	off4, err := fl.Alloc(4)
 	assert.NoError(t, err)
 
-	fl.SetVer(5, 1)
+	c.Ver, c.Keep = 5, 1
 	fl.Free(1, off1, 1)
 
-	fl.SetVer(6, 5)
+	c.Ver, c.Keep = 6, 5
 	fl.Free(2, off2, 2)
 
-	fl.SetVer(7, 5)
+	c.Ver, c.Keep = 7, 5
 	fl.Free(1, off3, 3)
 
-	next := fl.next
+	next := fl.FileNext
 
-	fl.SetVer(8, 6)
+	c.Ver, c.Keep = 8, 6
 	fl.Free(3, off4, 4)
 
-	if fl.next >= next {
+	if fl.FileNext >= next {
 		t.Errorf("file didn't shrink")
 		return
 	}
 
 	pver := func(off int64) (ver, size int64) {
 		p := b.Access(off, 0x10)
-		ver = pl.getver(p)
-		size = int64(1+pl.overflow(p)) * Page
+		ver = l.pagever(p)
+		size = int64(1+l.overflow(p)) * Page
 		b.Unlock(p)
 		return
 	}
 
-	for off := fl.next; off <= next; {
+	for off := fl.FileNext; off <= next; {
 		v, s := pver(off)
-		if v >= fl.keep {
-			t.Errorf("page %x with ver %d freed while keep == %d", off, v, fl.keep)
+		if v >= c.Keep {
+			t.Errorf("page %x with ver %d freed while keep == %d", off, v, c.Keep)
 		}
 		off += s
 	}
 
-	tlog.Printf("next %x, pages %x %x %x %x", fl.next, off1, off2, off3, off4)
+	tlog.Printf("next %x, pages %x %x %x %x", fl.FileNext, off1, off2, off3, off4)
 
-	//	tlog.Printf("file: %x\n%v", fl.next, dumpFile(pl))
+	//	tlog.Printf("file: %x\n%v", fl.FileNext, dumpFile(pl))
 }

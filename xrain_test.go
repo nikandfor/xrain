@@ -51,9 +51,9 @@ func TestXRainSmoke(t *testing.T) {
 	const Page = 0x100
 
 	b := NewMemBack(0)
-	pl := NewFixedLayout(b, Page, nil)
+	l := NewFixedLayout(nil)
 
-	db, err := NewDB(b, Page, pl)
+	db, err := NewDB(b, Page, l)
 	assert.NoError(t, err)
 
 	err = db.Update(func(tx *Tx) error {
@@ -65,10 +65,10 @@ func TestXRainSmoke(t *testing.T) {
 		l, r := b.Access2(0, 0x40, Page, 0x40)
 		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 		b.Unlock2(l, r)
-		tlog.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+		tlog.Printf("dump root %x free %x next %x\n%v", db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
 	}
 
-	db, err = NewDB(b, 0, pl)
+	db, err = NewDB(b, 0, l)
 	assert.NoError(t, err)
 
 	err = db.View(func(tx *Tx) error {
@@ -90,10 +90,10 @@ func TestXRainSmoke(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	l, r := b.Access2(0, 0x40, Page, 0x40)
-	tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
-	b.Unlock2(l, r)
-	tlog.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+	off0, off1 := b.Access2(0, 0x40, Page, 0x40)
+	tlog.Printf("header pages:\n%v%v", hex.Dump(off0), hex.Dump(off1))
+	b.Unlock2(off0, off1)
+	tlog.Printf("dump root %x free %x next %x\n%v", db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
 }
 
 func TestXRainSmokeConcurrent(t *testing.T) {
@@ -101,12 +101,12 @@ func TestXRainSmokeConcurrent(t *testing.T) {
 	const N = 10
 
 	b := NewMemBack(0)
-	pl := NewFixedLayout(b, Page, nil)
+	l := NewFixedLayout(nil)
 
-	db, err := NewDB(b, Page, pl)
+	db, err := NewDB(b, Page, l)
 	assert.NoError(t, err)
 
-	tlog.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+	tlog.Printf("dump root %x free %x next %x\n%v", db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
 
 	var wg sync.WaitGroup
 	wg.Add(2 * N)
@@ -149,7 +149,7 @@ func TestXRainSmokeConcurrent(t *testing.T) {
 		l, r = b.Access2(2*Page, 0x40, 3*Page, 0x40)
 		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 		b.Unlock2(l, r)
-		tlog.Printf("dump root %x free %x next %x\n%v", db.t.Root(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+		tlog.Printf("dump root %x free %x next %x\n%v", db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
 
 		t.Logf("back base addr %p", &b.d[0])
 	}
@@ -189,8 +189,7 @@ func TestXRainHeavy(t *testing.T) {
 		l, r = b.Access2(2*Page, 0x40, 3*Page, 0x40)
 		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 		b.Unlock2(l, r)
-		pl := NewFixedLayout(b, Page, nil)
-		tlog.Printf("dump ver %d root %x (%d) free %x next %x\n%v", db.ver, db.t.Root(), db.t.Size(), db.fl.(*Freelist2).t.Root(), db.fl.(*Freelist2).next, dumpFile(pl))
+		tlog.Printf("dump ver %d root %x (%d) free %x next %x\n%v", db.c.Ver, db.root, 0, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
 	}
 }
 

@@ -1,6 +1,7 @@
 package xrain
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestKV2InsertOne(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	fl := NewEverGrowFreelist(b, Page, 0)
+	fl := NewEverGrowFreelist(&Common{Back: b})
 
 	c := &Common{
 		Back:     b,
@@ -25,7 +26,7 @@ func TestKV2InsertOne(t *testing.T) {
 
 	l := NewKVLayout2(c)
 
-	root, err := l.Alloc(1)
+	root, err := l.Alloc()
 	require.NoError(t, err)
 
 	st, err := l.Insert(Stack{MakeOffIndex(root, 0)}, 0x1, []byte("key_a"), []byte("value_a"))
@@ -49,7 +50,7 @@ func TestKV2InsertSplit(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	fl := NewEverGrowFreelist(b, Page, 0)
+	fl := NewEverGrowFreelist(&Common{Back: b})
 
 	c := &Common{
 		Back:     b,
@@ -60,7 +61,7 @@ func TestKV2InsertSplit(t *testing.T) {
 
 	l := NewKVLayout2(c)
 
-	root, err := l.Alloc(1)
+	root, err := l.Alloc()
 	require.NoError(t, err)
 
 	st, err := l.Insert(Stack{MakeOffIndex(root, 0)}, 0x1, []byte("key_a"), []byte("value_a"))
@@ -88,18 +89,18 @@ func TestKV2InsertBig(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	fl := NewEverGrowFreelist(b, Page, 0)
-
 	c := &Common{
-		Back:     b,
-		Page:     Page,
-		Mask:     Page - 1,
-		Freelist: fl,
+		Back: b,
+		Page: Page,
+		Mask: Page - 1,
 	}
+
+	fl := NewEverGrowFreelist(c)
+	c.Freelist = fl
 
 	l := NewKVLayout2(c)
 
-	root, err := l.Alloc(1)
+	root, err := l.Alloc()
 	require.NoError(t, err)
 
 	st, err := l.Insert(Stack{MakeOffIndex(root, 0)}, 0x1, []byte("key_a"), []byte("value_a"))
@@ -119,4 +120,20 @@ func TestKV2InsertBig(t *testing.T) {
 	assert.Equal(t, Stack{MakeOffIndex(Page, 1)}, st)
 
 	t.Logf("dump:\n%v", hex.Dump(b.d))
+}
+
+func longval(l int, v string) []byte {
+	r := make([]byte, l)
+	copy(r, v)
+	return r
+}
+
+func intval(v int64) []byte {
+	r := make([]byte, 8)
+	binary.BigEndian.PutUint64(r, uint64(v))
+	return r
+}
+
+func nf(k []byte, f int) []byte {
+	return k
 }

@@ -1,3 +1,5 @@
+// +build ignore
+
 package xrain
 
 import (
@@ -122,7 +124,7 @@ func (l *BaseLayout) Free(off int64, r bool) error {
 	n := 1 + l.overflow(p)
 	l.b.Unlock(p)
 
-	return l.free.Free(n, off, ver)
+	return l.free.Free(off, ver, n)
 }
 
 func (l *BaseLayout) realloc(n int, off, ver int64) (noff int64, err error) {
@@ -133,7 +135,7 @@ func (l *BaseLayout) realloc(n int, off, ver int64) (noff int64, err error) {
 
 	l.b.Copy(noff, off, int64(n)*l.page)
 
-	err = l.free.Free(n, off, ver)
+	err = l.free.Free(off, ver, n)
 
 	return
 }
@@ -689,7 +691,7 @@ again:
 	}
 
 	if rfree {
-		err = l.free.Free(l.pm, roff, rver)
+		err = l.free.Free(roff, rver, l.pm)
 		if err != nil {
 			return
 		}
