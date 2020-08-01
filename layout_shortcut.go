@@ -34,11 +34,26 @@ func (t *LayoutShortcut) Get(k []byte) (v []byte, ff int) {
 }
 
 func (t *LayoutShortcut) Put(ff int, k, v []byte) (err error) {
+	if t.Root == NilPage {
+		t.Root, err = t.Alloc()
+		if err != nil {
+			return
+		}
+	}
+
 	t.st, _ = t.Seek(t.st[:0], t.Root, k)
+
+	tl.V("stack").Printf("put to %v  %2x %2x", t.st, k, v)
 
 	t.st, err = t.Insert(t.st, ff, k, v)
 
+	if tl.V("root") != nil && t.st[0].Off(t.Mask) != t.Root {
+		tl.Printf("root %x <- %x", t.st[0].Off(t.Mask), t.Root)
+	}
+
 	t.Root = t.st[0].Off(t.Mask)
+
+	tl.V("dump").Printf("dump\n%v", t.Layout.(pageDumper).dumpPage(t.Root))
 
 	return err
 }
@@ -51,6 +66,10 @@ func (t *LayoutShortcut) Del(k []byte) (err error) {
 	}
 
 	t.st, err = t.Delete(t.st)
+
+	if tl.V("root") != nil && t.st[0].Off(t.Mask) != t.Root {
+		tl.Printf("root %x <- %x", t.st[0].Off(t.Mask), t.Root)
+	}
 
 	t.Root = t.st[0].Off(t.Mask)
 

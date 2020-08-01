@@ -46,6 +46,10 @@ type (
 	fileDumper interface {
 		dumpFile() string
 	}
+
+	pageDumper interface {
+		dumpPage(off int64) string
+	}
 )
 
 const NilPage = -1
@@ -128,6 +132,8 @@ func (l *BaseLayout2) realloc(off, ver int64, oldn, n int) (noff int64, err erro
 	if err != nil {
 		return
 	}
+
+	tl.V("realloc").Printf("realloc %x <- %x  size %x <- %x", noff, off, n, oldn)
 
 	d, s := l.Access2(noff, l.Page*int64(n), off, l.Page*int64(oldn))
 	func() {
@@ -841,7 +847,7 @@ func (l *KVLayout2) out(st Stack, off0, off1 int64) (_ Stack, err error) {
 
 		st = append(st, 0)
 		copy(st[1:], st)
-		st[0] = 0
+		st[0] = MakeOffIndex(off, 0)
 	} else if reduce {
 		l := len(st) - 1
 		copy(st, st[1:])
@@ -870,6 +876,10 @@ func (l OffIndex) OffIndex(m int64) (int64, int) {
 func (st Stack) LastOffIndex(m int64) (int64, int) {
 	last := st[len(st)-1]
 	return last.Off(m), last.Index(m)
+}
+
+func (st Stack) String() string {
+	return fmt.Sprintf("%3x", []OffIndex(st))
 }
 
 func (l *KVLayout2) dumpPage(off int64) string {

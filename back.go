@@ -9,7 +9,7 @@ type (
 		Access(off, len int64) []byte
 		Access2(off, len, off2, len2 int64) (p, p2 []byte)
 		Unlock(p []byte)
-		Unlock2(l, r []byte)
+		Unlock2(p, p2 []byte)
 
 		Copy(roff, loff, len int64)
 

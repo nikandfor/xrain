@@ -11,7 +11,7 @@ import (
 const Version = "000"
 
 var (
-	DefaultPageSize int64 = 0x1000 // 4 KiB
+	DefaultPageSize int64 = 4 * KB
 
 	CRCTable = crc64.MakeTable(crc64.ECMA)
 )

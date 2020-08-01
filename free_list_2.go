@@ -2,14 +2,16 @@ package xrain
 
 import (
 	"encoding/binary"
+
+	"github.com/nikandfor/tlog"
 )
 
 const (
 	B = 1 << (10 * iota)
-	KiB
-	MiB
-	GiB
-	TiB
+	KB
+	MB
+	GB
+	TB
 )
 
 type (
@@ -41,6 +43,8 @@ type (
 	}
 )
 
+const flDelete = -1
+
 func NewFreelist2(c *Common, l Layout, root int64) *Freelist2 {
 	flen := c.Back.Size()
 
@@ -53,19 +57,20 @@ func NewFreelist2(c *Common, l Layout, root int64) *Freelist2 {
 }
 
 func (f *Freelist2) Alloc(n int) (off int64, err error) {
-	//	tlog.Printf("alloc: %2x       ver %d/%d next %x def %x", n, f.ver, f.Keep, f.next, f.deferred)
-	//	defer func() {
-	//		tlog.Printf("alloc: %2x %4x  ver %d/%d next %x def %x", n, off, f.ver, f.Keep, f.next, f.deferred)
-	//	}()
+	tl.V("alloc,in").Printf("alloc: %2x   ??  ver %x/%x next %x def %x[%d:] from %v", n, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi, tlog.StackTrace(1, 3))
+	defer func() {
+		tl.V("alloc,out").Printf("alloc: %2x %4x  ver %x/%x next %x def %x[%d:]", n, off, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
+	}()
 
 	nsize := nsize(n)
 	used := map[int64]struct{}{}
 	for i := len(f.deferred) - 1; i >= 0; i-- {
 		kv := f.deferred[i]
-		if kv.v == 0 {
+		if kv.v == flDelete {
 			used[kv.k] = struct{}{}
 			continue
 		}
+
 		if _, ok := used[kv.k]; ok {
 			continue
 		}
@@ -79,7 +84,7 @@ func (f *Freelist2) Alloc(n int) (off int64, err error) {
 		}
 		if size == nsize {
 			//	log.Printf("asquired %d found %x %x  ver %x/%x def %x", n, kv.k, kv.v, f.ver, f.Keep, f.deferred)
-			f.deferOp(kv.k, 0)
+			f.deferOp(kv.k, flDelete)
 			return kv.k &^ f.Mask, nil
 		}
 	}
@@ -88,6 +93,7 @@ func (f *Freelist2) Alloc(n int) (off int64, err error) {
 next:
 	st = f.t.Next(st)
 	if st == nil {
+		// TODO: could alloc less than full block plus align
 		return f.allocGrow(n)
 	}
 	last, _ := f.l.Key(st, nil)
@@ -100,7 +106,7 @@ next:
 	}
 
 	for _, kv := range f.deferred {
-		if kv.v == 0 && kv.k == off {
+		if kv.v == flDelete && kv.k == off {
 			goto next
 		}
 	}
@@ -111,7 +117,7 @@ next:
 		goto next
 	}
 
-	f.deferOp(off, 0)
+	f.deferOp(off, flDelete)
 
 	off &^= f.Mask
 
@@ -133,48 +139,51 @@ func (f *Freelist2) allocGrow(n int) (off int64, err error) {
 	p := f.Page << sz
 	pm := p - 1
 	next := f.FileNext + p
-	if f.FileNext&pm != 0 {
-		next += p - next&pm
+	if next&pm != 0 {
+		next = next&^pm + p
 	}
 	f.flen, err = growFile(f.Back, f.Page, next)
 	if err != nil {
 		return
 	}
 
-	//	log.Printf("grow   % 16x x %d : %x -> %x  p %x", f.FileNext, n, f.FileNext, next, p)
+	tl.V("grow").Printf("grow   % 4x n %d : %x -> %x  p %x", f.FileNext, n, f.FileNext, next, p)
 
 	off = f.FileNext
 	f.FileNext = next
 
 	for b, n := align(off, p, sz); b != 0; b, n = align(off, p, sz) {
-		//	log.Printf("back   % 16x n %x", off, n)
+		tl.V("grow").Printf("back   % 4x n %x", off, n)
 		err = f.Free(off, f.Keep-1, n)
 		if err != nil {
 			return
 		}
 		off += b
+
+		tl.V("grow").Printf("freed %x x %x  root %x\n%v", off, n, f.t.Root, f.l.(pageDumper).dumpPage(f.t.Root))
 	}
 
 	err = f.unlock()
 
-	//	log.Printf("grow   % 16x x %d", off, n)
+	tl.V("grow").Printf("galloc % 4x n %d", off, n)
 
 	return
 }
 
 func (f *Freelist2) Free(off, ver int64, n int) (err error) {
-	//	log.Printf("freei: %2x %4x  ver %d/%d next %x def %x", n, off, f.ver, f.Keep, f.FileNext, f.deferred)
-	//	defer func() {
-	//		log.Printf("freeo: %2x %4x  ver %d/%d next %x def %x", n, off, f.ver, f.Keep, f.FileNext, f.deferred)
-	//	}()
+	var sz uint
+	tl.V("free,in").Printf("freei: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]  from %#v", n, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi, tlog.StackTrace(1, 4))
+	defer func() {
+		tl.V("free,out").Printf("freeo: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]", 1<<sz, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi)
+	}()
 
-	if ver == 0 { // 0 is a special value
-		ver = -1
+	if ver == flDelete { // special value
+		ver = -2
 	}
 
 	var buf [8]byte
 
-	sz := nsize(n)
+	sz = nsize(n)
 more:
 	ps := f.Page << sz
 	sib := off ^ ps
@@ -190,12 +199,12 @@ more:
 		if kv.k != sib|int64(sz) {
 			continue
 		}
-		if kv.v == 0 {
+		if kv.v == flDelete {
 			goto fin
 		}
 
-		//	log.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
-		f.deferOp(sib|int64(sz), 0)
+		tl.V("merge,sibling").Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
+		f.deferOp(sib|int64(sz), flDelete)
 
 		sz++
 		off &= sib
@@ -208,8 +217,8 @@ more:
 
 	if vbytes, _ := f.t.Get(buf[:8]); vbytes != nil {
 		v := int64(binary.BigEndian.Uint64(vbytes))
-		//	log.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
-		f.deferOp(sib|int64(sz), 0)
+		tl.V("merge,sibling").Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
+		f.deferOp(sib|int64(sz), flDelete)
 
 		sz++
 		off &= sib
@@ -221,7 +230,7 @@ more:
 	}
 
 fin:
-	//	log.Printf("free   merged %4x n %d  last %16x def %x", off, n, f.last, f.deferred)
+	tl.V("merge").Printf("free   merged %4x n %d ver %x  def %x", off, n, ver, f.deferred)
 	f.deferOp(off|int64(sz), ver)
 
 	err = f.unlock()
@@ -230,7 +239,7 @@ fin:
 }
 
 func (f *Freelist2) unlock() (err error) {
-	//	log.Printf("unlock: next %x/%x last %x deff %x ver %d/%d lock %v", f.FileNext, f.flen, f.last, f.deferred, f.ver, f.Keep, f.lock)
+	tl.V("unlock").Printf("unlock: next %x/%x deff %x ver %d/%d lock %v from %#v", f.FileNext, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tlog.StackTrace(1, 2))
 	if f.lock {
 		return
 	}
@@ -242,10 +251,10 @@ func (f *Freelist2) unlock() (err error) {
 		kv := f.deferred[i]
 		f.defi = i
 
-		//	log.Printf("op     %x %x  el %d of %x", kv.k, kv.v, i, f.deferred)
+		tl.V("unlockop").Printf("op     %x %x  el %d of %x", kv.k, kv.v, i, f.deferred)
 
 		binary.BigEndian.PutUint64(buf[:8], uint64(kv.k))
-		if kv.v == 0 {
+		if kv.v == flDelete {
 			err = f.t.Del(buf[:8])
 		} else {
 			binary.BigEndian.PutUint64(buf[8:], uint64(kv.v))
@@ -303,27 +312,44 @@ func (f *Freelist2) shrinkFile() (err error) {
 	if fend == f.FileNext {
 		return
 	}
-	// TODO(nik): shrink by big parts
 
-	err = f.Truncate(fend)
-	if err != nil {
-		return
+	var truncate bool
+	diff := f.flen - fend
+	switch {
+	case f.flen < 8*f.Page:
+	case f.flen < 64*KB:
+		truncate = diff >= f.flen/2
+	case f.flen < 100*MB:
+		truncate = diff >= f.flen/4
+	case f.flen < GB:
+		truncate = diff >= f.flen/16
+	default:
+		truncate = diff >= GB/16
+	}
+
+	if truncate {
+		err = f.Truncate(fend)
+		if err != nil {
+			return
+		}
+
+		f.flen = fend
 	}
 
 	//	log.Printf("file shrunk %x <- %x", fend, f.FileNext)
 
 	f.FileNext = fend
-	f.flen = fend
 
 	return
 }
 
 func (f *Freelist2) deferOp(k, v int64) {
 	ln := len(f.deferred) - 1
-	if ln > f.defi && f.deferred[ln].k == k && v == 0 {
+	if ln > f.defi && f.deferred[ln].k == k && (f.deferred[ln].v == flDelete) != (v == flDelete) {
 		f.deferred = f.deferred[:ln]
 		return
 	}
+	tl.V("").Printf("deferred %x %x on defi %d (ln %d) %x  (%v %v %v)", k, v, f.defi, ln, f.deferred, ln > f.defi, ln > f.defi && f.deferred[ln].k == k, ln > f.defi && (f.deferred[ln].v == flDelete) != (v == flDelete))
 	f.deferred = append(f.deferred, kv2{k, v})
 }
 
@@ -370,7 +396,7 @@ func (f *GrowFreelist) Alloc(n int) (off int64, err error) {
 	size := int64(n) * f.Page
 	f.flen, err = growFile(f.Back, f.Page, off+size)
 	if err != nil {
-		return 0, err
+		return NilPage, err
 	}
 	f.FileNext += size
 
@@ -390,14 +416,14 @@ func growFile(b Back, page, sz int64) (flen int64, err error) {
 		switch {
 		case flen < 4*page:
 			flen = 4 * page
-		case flen < 64*KiB:
+		case flen < 64*KB:
 			flen *= 2
-		case flen < 100*MiB:
-			flen += flen / 4
-		case flen < GiB:
-			flen += flen / 16
+		case flen < 100*MB:
+			flen += flen / 4 // at most 25 MB
+		case flen < GB:
+			flen += flen / 16 // at most 64 MB
 		default:
-			flen += GiB / 16 // 64 MiB
+			flen += GB / 16 // 64 MB
 		}
 
 		flen -= flen % page
