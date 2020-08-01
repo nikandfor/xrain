@@ -180,8 +180,8 @@ func TestFixedPutDel(t *testing.T) {
 func TestFixedAuto(t *testing.T) {
 	initLogger(t)
 
-	const Page = 0x40
-	const N = 20
+	const Page = 0x80
+	const N, Prime, Prime2 = 100, 29, 17
 
 	b := NewMemBack(0)
 	c := &Common{
@@ -198,6 +198,10 @@ func TestFixedAuto(t *testing.T) {
 
 	tr := NewLayoutShortcut(l, NilPage, Page-1)
 
+	mix := func(i int) int {
+		return i * Prime % Prime2
+	}
+
 	key := func(i int) []byte {
 		return []byte(fmt.Sprintf("key_%03x", i))
 	}
@@ -208,9 +212,12 @@ func TestFixedAuto(t *testing.T) {
 
 	var err error
 	exp := map[string][]byte{}
+	cnt := map[string]int{}
 
 	check := func() bool {
 		var last []byte
+
+		tl.V("dump").Printf("dump  root %x\n%v", tr.Root, l.dumpFile())
 
 		n := 0
 		for st := tr.First(nil); st != nil; st = tr.Next(st) {
@@ -224,33 +231,49 @@ func TestFixedAuto(t *testing.T) {
 
 			assert.Equal(t, exp[string(key)], val)
 
-			assert.True(t, bytes.Compare(last, key) < 0, "%q not before %q", last, key)
+			assert.True(t, bytes.Compare(last, key) <= 0, "%q before %q", last, key)
 
 			n++
 			last = key
 		}
 
-		assert.Equal(t, len(exp), n)
+		sum := 0
+		for _, c := range cnt {
+			sum += c
+		}
+
+		if !assert.Equal(t, sum, n) {
+			tl.Printf("expected %s %v", exp, cnt)
+		}
 
 		return !t.Failed()
 	}
 
 	func() {
 		for i := 0; i < N; i++ {
-			k := key(i)
-			v := value(i)
+			j := mix(i)
+
+			k := key(j)
+			v := value(j)
 			switch i % 4 {
 			case 0, 1:
 				tl.V("cmd").Printf("put %q -> %q", k, v)
 				exp[string(k)] = v
-				err = tr.Put(i, k, v)
+				cnt[string(k)]++
+				err = tr.Put(j, k, v)
 			case 2:
 				tl.V("cmd").Printf("del %q", k)
+				if c := cnt[string(k)]; c > 0 {
+					cnt[string(k)]--
+					if c == 1 {
+						delete(exp, string(k))
+					}
+				}
 				err = tr.Del(k)
 			case 3:
 				val, ff := tr.Get(k)
 				if v, ok := exp[string(k)]; ok {
-					assert.Equal(t, i&0xff, ff)
+					assert.Equal(t, j&0xff, ff)
 					assert.Equal(t, v, val)
 				}
 			}
@@ -269,12 +292,18 @@ func TestFixedAuto(t *testing.T) {
 			tl.Printf("dump: %x\n%v", tr.Root, l.dumpFile())
 		}
 
-		for st := tr.First(nil); st != nil; st = tr.Next(st) {
+		for st := tr.First(nil); st != nil; st = tr.First(st) {
 
 			key, _ := tr.Key(st, nil)
 
 			tl.V("cmd").Printf("del %q", key)
 
+			if c := cnt[string(key)]; c > 0 {
+				cnt[string(key)]--
+				if c == 1 {
+					delete(exp, string(key))
+				}
+			}
 			_, err = tr.Delete(st)
 			assert.NoError(t, err)
 

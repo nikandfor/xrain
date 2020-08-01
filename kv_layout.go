@@ -133,7 +133,7 @@ func (l *BaseLayout2) realloc(off, ver int64, oldn, n int) (noff int64, err erro
 		return
 	}
 
-	tl.V("realloc").Printf("realloc %x <- %x  size %x <- %x", noff, off, n, oldn)
+	tl.V("realloc").Printf("realloc %3x <- %3x  size %x <- %x", noff, off, n, oldn)
 
 	d, s := l.Access2(noff, l.Page*int64(n), off, l.Page*int64(oldn))
 	func() {
@@ -153,6 +153,8 @@ func (l *BaseLayout2) Alloc() (int64, error) {
 	if err != nil {
 		return NilPage, err
 	}
+
+	tl.V("lalloc").Printf("layout alloc %3x %d", off, 1)
 
 	p := l.Access(off, 0x10)
 	l.setleaf(p, true)

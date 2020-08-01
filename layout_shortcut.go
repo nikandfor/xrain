@@ -28,7 +28,7 @@ func (t *LayoutShortcut) Get(k []byte) (v []byte, ff int) {
 		ff = l.Flags(t.st)
 	}
 
-	v = t.Value(t.st, nil)
+	v = t.Layout.Value(t.st, nil)
 
 	return
 }
@@ -43,17 +43,15 @@ func (t *LayoutShortcut) Put(ff int, k, v []byte) (err error) {
 
 	t.st, _ = t.Seek(t.st[:0], t.Root, k)
 
-	tl.V("stack").Printf("put to %v  %2x %2x", t.st, k, v)
-
-	t.st, err = t.Insert(t.st, ff, k, v)
-
-	if tl.V("root") != nil && t.st[0].Off(t.Mask) != t.Root {
-		tl.Printf("root %x <- %x", t.st[0].Off(t.Mask), t.Root)
+	t.st, err = t.Layout.Insert(t.st, ff, k, v)
+	if err != nil {
+		return
 	}
 
-	t.Root = t.st[0].Off(t.Mask)
+	tl.V("tree,put").Printf("put %x %q %q to %3x : %v", ff, k, v, t.Root, t.st)
+	tl.V("root").If(t.st[0].Off(t.Mask) != t.Root).Printf("root %x <- %x", t.st[0].Off(t.Mask), t.Root)
 
-	tl.V("dump").Printf("dump\n%v", t.Layout.(pageDumper).dumpPage(t.Root))
+	t.Root = t.st[0].Off(t.Mask)
 
 	return err
 }
@@ -65,11 +63,11 @@ func (t *LayoutShortcut) Del(k []byte) (err error) {
 		return nil
 	}
 
-	t.st, err = t.Delete(t.st)
+	t.st, err = t.Layout.Delete(t.st)
 
-	if tl.V("root") != nil && t.st[0].Off(t.Mask) != t.Root {
-		tl.Printf("root %x <- %x", t.st[0].Off(t.Mask), t.Root)
-	}
+	tl.V("tree,del").Printf("del %v by %3x %q", t.st, t.Root, k)
+
+	tl.V("root").If(t.st[0].Off(t.Mask) != t.Root).Printf("root %x <- %x", t.st[0].Off(t.Mask), t.Root)
 
 	t.Root = t.st[0].Off(t.Mask)
 
@@ -90,4 +88,26 @@ func (t *LayoutShortcut) Next(st Stack) Stack {
 
 func (t *LayoutShortcut) Prev(st Stack) Stack {
 	return t.Step(st, t.Root, true)
+}
+
+func (t *LayoutShortcut) Delete(st Stack) (_ Stack, err error) {
+	st, err = t.Layout.Delete(st)
+	if err != nil {
+		return
+	}
+
+	t.Root = st[0].Off(t.Mask)
+
+	return st, nil
+}
+
+func (t *LayoutShortcut) Insert(st Stack, ff int, k, v []byte) (_ Stack, err error) {
+	st, err = t.Layout.Insert(st, ff, k, v)
+	if err != nil {
+		return
+	}
+
+	t.Root = st[0].Off(t.Mask)
+
+	return st, nil
 }
