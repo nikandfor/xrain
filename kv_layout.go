@@ -17,7 +17,7 @@ type (
 		Alloc() (int64, error)
 		Free(root int64) error
 
-		Seek(s Stack, root int64, k []byte) (Stack, bool)
+		Seek(s Stack, root int64, k []byte) (Stack, bool) // TODO: add value
 		Step(s Stack, root int64, back bool) Stack
 
 		Key(s Stack, buf []byte) ([]byte, int)

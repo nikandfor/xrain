@@ -492,11 +492,14 @@ func TestFreelistShrinkFile(t *testing.T) {
 
 	next := fl.FileNext
 
-	c.Ver, c.Keep = 8, 6
+	c.Ver, c.Keep = 9, 8
 	fl.Free(off4, 4, 3)
 
 	if fl.FileNext >= next {
 		t.Errorf("file didn't shrink")
+
+		t.Logf("dump root %x  next %x  ver %x / %x\n%v", fl.t.Root, fl.FileNext, fl.Ver, fl.Keep, fl.l.(fileDumper).dumpFile())
+
 		return
 	}
 
