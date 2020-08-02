@@ -244,8 +244,10 @@ func (l *FixedLayout) Seek(st Stack, root int64, k []byte) (_ Stack, eq bool) {
 	for !isleaf {
 		i, n, coff, eq, isleaf = l.search(off, k)
 
-		tl.V("seek").If(isleaf).Printf("seek root %3x  off %3x -> i %2d / %2d  eq %5v  - leaf", root, off, i, n, eq)
-		tl.V("seek").If(!isleaf).Printf("seek root %3x  off %3x -> %3x  i %2d / %2d  - branch", root, off, coff, i, n)
+		if tl.V("seek") != nil {
+			tl.If(isleaf).Printf("seek root %3x  off %3x -> i %2d / %2d  eq %5v  - leaf", root, off, i, n, eq)
+			tl.If(!isleaf).Printf("seek root %3x  off %3x -> %3x  i %2d / %2d  - branch", root, off, coff, i, n)
+		}
 
 		if !isleaf && i == n {
 			i--
@@ -256,7 +258,9 @@ func (l *FixedLayout) Seek(st Stack, root int64, k []byte) (_ Stack, eq bool) {
 		off = coff
 	}
 
-	tl.V("seek,seek_res").Printf("seek root %3x -> %v  eq %5v by %q [% 2x]", root, st, eq, k, k)
+	if tl.V("seek,seek_res") != nil {
+		tl.Printf("seek root %3x -> %v  eq %5v by %q [% 2x]", root, st, eq, k, k)
+	}
 
 	return st, eq
 }
@@ -336,9 +340,11 @@ func (l *FixedLayout) firstLast(st Stack, off int64, back bool) Stack {
 }
 
 func (l *FixedLayout) Step(st Stack, root int64, back bool) Stack {
-	defer func() {
-		tl.V("step").Printf("step root %3x -> %v  (back %v)", root, st, back)
-	}()
+	if tl.V("step") != nil {
+		defer func() {
+			tl.Printf("step root %3x -> %v  (back %v)", root, st, back)
+		}()
+	}
 
 	if len(st) == 0 {
 		return l.firstLast(st, root, back)
@@ -413,7 +419,9 @@ again:
 		n := l.nkeys(p)
 		split = l.dataoff(isleaf, n+1) > int(l.p)
 
-		tl.If(split).V("insert,split").Printf("split %3x  %d / %d  by %q %q  free %x / %x", off, i, n, k, v, int(l.p)-l.dataoff(isleaf, n), l.p)
+		if split && tl.V("insert,split") != nil {
+			tl.Printf("split %3x  %d / %d  by %q %q  free %x / %x", off, i, n, k, v, int(l.p)-l.dataoff(isleaf, n), l.p)
+		}
 
 		if alloc || split {
 			return
@@ -519,7 +527,9 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 	for d := len(s) - 2; d >= 0; d-- {
 		off, i := s[d].OffIndex(l.Mask)
 
-		tl.V("out").Printf("out d %d  %3x %d  -> %3x %3x  di %d  reb %v   st %v", d, off, i, off0, off1, di, rebalance, s)
+		if tl.V("out") != nil {
+			tl.Printf("out d %d  %3x %d  -> %3x %3x  di %d  reb %v   st %v", d, off, i, off0, off1, di, rebalance, s)
+		}
 
 		if off1 == NilPage && di != 0 || off1 != NilPage && rebalance {
 			tl.Printf("bad situation: par %x %d off %x %x di %d rebalance %v st %v", off, i, off0, off1, di, rebalance, s)
@@ -527,16 +537,15 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 		}
 
 		if rebalance {
-			//	tl.Printf("dump before rebalance %x\n%v", off, l.dumpPage(off))
-
 			di, err = l.rebalance(s[:d+2], off0)
 			if err != nil {
 				return
 			}
 
 			if di != -1 {
-				tl.V("out").Printf("out merged %3x %d + %d  (%3x)", off, i, di, off0)
-				//	tl.Printf("dump %x\n%v", off, l.dumpPage(off))
+				if tl.V("out") != nil {
+					tl.Printf("out merged %3x %d + %d  (%3x)", off, i, di, off0)
+				}
 
 				off, rebalance, err = l.delete(off, di)
 				if err != nil {
@@ -576,7 +585,9 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 			return
 		}
 
-		tl.V("out").If(off1 != NilPage).Printf("out split %x -> %x %x  split %d", off, off0, off1, split)
+		if tl.V("out").If(off1 != NilPage) != nil {
+			tl.Printf("out split %x -> %x %x  split %d", off, off0, off1, split)
+		}
 
 		if split == 0 {
 			s[d] = MakeOffIndex(off0, i+di)
@@ -602,7 +613,9 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 
 				l.Freelist.Free(off, ver, l.pm)
 
-				tl.V("out").Printf("out pop  root %x -> %v", off, s)
+				if tl.V("out") != nil {
+					tl.Printf("out pop  root %x -> %v", off, s)
+				}
 			}
 		}
 	}
@@ -613,7 +626,9 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 			return nil, err
 		}
 
-		tl.V("out").Printf("out push root %x <- %x, %x", root, off0, off1)
+		if tl.V("out") != nil {
+			tl.Printf("out push root %x <- %x, %x", root, off0, off1)
+		}
 
 		l.rootAppendLink(root, 0, off0)
 		l.rootAppendLink(root, 1, off1)
@@ -692,7 +707,9 @@ func (l *FixedLayout) rootAppendLink(root int64, i int, off int64) {
 
 		l.setnkeys(p, i+1)
 
-		tl.V("grow").Printf("out %x to %x of\n%v", off, st+l.k, hex.Dump(p))
+		if tl.V("grow") != nil {
+			tl.Printf("out %x to %x of\n%v", off, st+l.k, hex.Dump(p))
+		}
 	}()
 	l.Unlock2(p, cp)
 }
@@ -730,7 +747,9 @@ again:
 
 		rebalance = end < int(l.p)*2/5
 
-		tl.If(rebalance).V("delete,rebalance").Printf("rebalance %3x  %d / %d   used %3x / %3x", off, i, n, l.dataoff(isleaf, n), l.p)
+		if rebalance && tl.V("delete,rebalance") != nil {
+			tl.Printf("rebalance %3x  %d / %d   used %3x / %3x", off, i, n, l.dataoff(isleaf, n), l.p)
+		}
 
 		if alloc {
 			return

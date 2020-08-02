@@ -133,7 +133,9 @@ func (l *BaseLayout2) realloc(off, ver int64, oldn, n int) (noff int64, err erro
 		return
 	}
 
-	tl.V("realloc").Printf("realloc %3x <- %3x  size %x <- %x", noff, off, n, oldn)
+	if tl.V("realloc") != nil {
+		tl.Printf("realloc %3x <- %3x  size %x <- %x", noff, off, n, oldn)
+	}
 
 	d, s := l.Access2(noff, l.Page*int64(n), off, l.Page*int64(oldn))
 	func() {

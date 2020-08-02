@@ -550,10 +550,13 @@ func BenchmarkFreelist2(t *testing.B) {
 
 		if rnd.Intn(2) == 0 {
 			n := rnd.Intn(1<<M) + 1
-			tl.V("cmd").Printf("alloc%% %d       - ver %x", n, ver)
+			if tl.V("cmd") != nil {
+				tl.Printf("alloc%% %d       - ver %x", n, ver)
+			}
 
 			off, err := fl.Alloc(n)
-			if !assert.NoError(t, err) {
+			if err != nil {
+				assert.NoError(t, err)
 				break
 			}
 			alloc = append(alloc, MakeOffIndex(off, n))
@@ -569,7 +572,9 @@ func BenchmarkFreelist2(t *testing.B) {
 		} else if len(alloc) != 0 {
 			i := rand.Intn(len(alloc))
 			off, n := alloc[i].OffIndex(Mask)
-			tl.V("cmd").Printf("free %% %d %5x - ver %x", n, off, ver)
+			if tl.V("cmd") != nil {
+				tl.Printf("free %% %d %5x - ver %x", n, off, ver)
+			}
 
 			var ver int64
 			p := b.Access(off, 0x10)
@@ -577,7 +582,8 @@ func BenchmarkFreelist2(t *testing.B) {
 			b.Unlock(p)
 
 			err := fl.Free(off, ver, n)
-			if !assert.NoError(t, err) {
+			if err != nil {
+				assert.NoError(t, err)
 				break
 			}
 

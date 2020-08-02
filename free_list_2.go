@@ -57,10 +57,12 @@ func NewFreelist2(c *Common, l Layout, root int64) *Freelist2 {
 }
 
 func (f *Freelist2) Alloc(n int) (off int64, err error) {
-	tl.V("alloc,in").Printf("alloc: %2x   ??  ver %x/%x next %x def %x[%d:] from %#v", n, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi, tl.VArg("where", tlog.StackTrace(1, 3)))
-	defer func() {
-		tl.V("alloc,out").Printf("alloc: %2x %4x  ver %x/%x next %x def %x[%d:]", n, off, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
-	}()
+	if tl.V("alloc") != nil {
+		tl.Printf("alloc: %2x   ??  ver %x/%x next %x def %x[%d:] from %#v", n, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi, tl.VArg("where", tlog.StackTrace(1, 3)))
+		defer func() {
+			tl.Printf("alloc: %2x %4x  ver %x/%x next %x def %x[%d:]", n, off, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
+		}()
+	}
 
 	nsize := nsize(n)
 	used := map[int64]struct{}{}
@@ -147,35 +149,42 @@ func (f *Freelist2) allocGrow(n int) (off int64, err error) {
 		return
 	}
 
-	tl.V("grow").Printf("grow   % 4x n %d : %x -> %x  p %x", f.FileNext, n, f.FileNext, next, p)
+	if tl.V("grow") != nil {
+		tl.Printf("grow   % 4x n %d : %x -> %x  p %x", f.FileNext, n, f.FileNext, next, p)
+	}
 
 	off = f.FileNext
 	f.FileNext = next
 
 	for b, n := align(off, p, sz); b != 0; b, n = align(off, p, sz) {
-		tl.V("grow").Printf("back   % 4x n %x", off, n)
+		if tl.V("grow") != nil {
+			tl.Printf("back   % 4x n %x", off, n)
+		}
+
 		err = f.Free(off, f.Keep-1, n)
 		if err != nil {
 			return
 		}
 		off += b
-
-		tl.V("grow").Printf("freed %x x %x  root %x\n%v", off, n, f.t.Root, f.l.(pageDumper).dumpPage(f.t.Root))
 	}
 
 	err = f.unlock()
 
-	tl.V("grow").Printf("galloc % 4x n %d", off, n)
+	if tl.V("grow") != nil {
+		tl.Printf("galloc % 4x n %d", off, n)
+	}
 
 	return
 }
 
 func (f *Freelist2) Free(off, ver int64, n int) (err error) {
 	var sz uint
-	tl.V("free,in").Printf("freei: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]  from %#v", n, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi, tl.VArg("where", tlog.StackTrace(1, 4)))
-	defer func() {
-		tl.V("free,out").Printf("freeo: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]", 1<<sz, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi)
-	}()
+	if tl.V("free") != nil {
+		tl.Printf("freei: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]  from %#v", n, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi, tl.VArg("where", tlog.StackTrace(1, 4)))
+		defer func() {
+			tl.Printf("freeo: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]", 1<<sz, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi)
+		}()
+	}
 
 	if ver == flDelete { // special value
 		ver = -2
@@ -203,7 +212,9 @@ more:
 			goto fin
 		}
 
-		tl.V("merge,sibling").Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
+		if tl.V("merge,sibling") != nil {
+			tl.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
+		}
 		f.deferOp(sib|int64(sz), flDelete)
 
 		sz++
@@ -217,7 +228,9 @@ more:
 
 	if vbytes, _ := f.t.Get(buf[:8]); vbytes != nil {
 		v := int64(binary.BigEndian.Uint64(vbytes))
-		tl.V("merge,sibling").Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
+		if tl.V("merge,sibling") != nil {
+			tl.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
+		}
 		f.deferOp(sib|int64(sz), flDelete)
 
 		sz++
@@ -230,7 +243,9 @@ more:
 	}
 
 fin:
-	tl.V("merge").If(n != 1<<sz).Printf("free   merged %4x n %d   to logsize %x (size %d)  ver %x  def %x", off, n, sz, 1<<sz, ver, f.deferred)
+	if n != 1<<sz && tl.V("merge") != nil {
+		tl.Printf("free   merged %4x n %d   to logsize %x (size %d)  ver %x  def %x", off, n, sz, 1<<sz, ver, f.deferred)
+	}
 	f.deferOp(off|int64(sz), ver)
 
 	err = f.unlock()
@@ -239,13 +254,14 @@ fin:
 }
 
 func (f *Freelist2) unlock() (err error) {
-	tl.V("unlock").Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.FileNext, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2)))
+	if tl.V("unlock") != nil {
+		tl.Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.FileNext, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2)))
+	}
+
 	if f.lock {
 		return
 	}
 	f.lock = true
-	tl.V("unlock_locked").
-		If(tl.V("unlock") == nil).Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.FileNext, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2)))
 
 	var buf [16]byte
 	i := 0
@@ -255,7 +271,9 @@ more:
 		kv := f.deferred[i]
 		f.defi = i
 
-		tl.V("unlockop").Printf("op     %3x %3x  el %2d of %x", kv.k, kv.v, i, f.deferred)
+		if tl.V("unlockop") != nil {
+			tl.Printf("op     %3x %3x  el %2d of %x", kv.k, kv.v, i, f.deferred)
+		}
 		//	tl.V("dump").Printf("dump  fl root %x\n%v", f.t.Root, f.l.(fileDumper).dumpFile())
 
 		binary.BigEndian.PutUint64(buf[:8], uint64(kv.k))
@@ -297,7 +315,9 @@ func (f *Freelist2) shrinkFile() (err error) {
 
 	fnext := f.FileNext
 
-	tl.V("shrink").Printf("try to shrink file ver/keep %x/%x fnext %x", f.Ver, f.Keep, fnext)
+	if tl.V("shrink") != nil {
+		tl.Printf("try to shrink file ver/keep %x/%x fnext %x", f.Ver, f.Keep, fnext)
+	}
 	//	tl.V("shrink_dump").Printf("\n%v", f.l.(fileDumper).dumpFile())
 
 	for {
@@ -310,7 +330,9 @@ func (f *Freelist2) shrinkFile() (err error) {
 		bst := int64(binary.BigEndian.Uint64(last))
 		bend := bst&^f.Mask + f.Page<<uint(bst&f.Mask)
 
-		tl.V("shrink").Printf("check last block %x - %x of %x", bst, bend, fnext)
+		if tl.V("shrink") != nil {
+			tl.Printf("check last block %x - %x of %x", bst, bend, fnext)
+		}
 
 		if bend != fnext {
 			break
@@ -360,7 +382,9 @@ func (f *Freelist2) shrinkFile() (err error) {
 		f.flen = fnext
 	}
 
-	tl.V("shrink,shrink_yes").Printf("file shrunk %x <- %x", fnext, f.FileNext)
+	if tl.V("shrink,shrink_yes") != nil {
+		tl.Printf("file shrunk %x <- %x", fnext, f.FileNext)
+	}
 
 	f.FileNext = fnext
 
@@ -373,7 +397,9 @@ func (f *Freelist2) deferOp(k, v int64) {
 		f.deferred = f.deferred[:ln]
 		return
 	}
-	tl.V("").Printf("deferred %x %x on defi %d (ln %d) %x  (%v %v %v)", k, v, f.defi, ln, f.deferred, ln > f.defi, ln > f.defi && f.deferred[ln].k == k, ln > f.defi && (f.deferred[ln].v == flDelete) != (v == flDelete))
+	if tl.V("") != nil {
+		tl.Printf("deferred %x %x on defi %d (ln %d) %x  (%v %v %v)", k, v, f.defi, ln, f.deferred, ln > f.defi, ln > f.defi && f.deferred[ln].k == k, ln > f.defi && (f.deferred[ln].v == flDelete) != (v == flDelete))
+	}
 	f.deferred = append(f.deferred, kv2{k, v})
 }
 

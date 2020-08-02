@@ -46,9 +46,12 @@ func (t *LayoutShortcut) Put(ff int, k, v []byte) (err error) {
 		return
 	}
 
-	tl.V("tree,put").Printf("put %x %q %q to %3x : %v", ff, k, v, t.Root, st)
-	tl.V("root").If(st[0].Off(t.Mask) != t.Root).Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
-	tl.V("root_anyway").If(st[0].Off(t.Mask) == t.Root).Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
+	if tl.V("tree,put") != nil {
+		tl.Printf("put %x %q %q to %3x : %v", ff, k, v, t.Root, st)
+	}
+	if tl.V("root").If(st[0].Off(t.Mask) != t.Root) != nil {
+		tl.Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
+	}
 
 	t.Root = st[0].Off(t.Mask)
 
@@ -63,10 +66,12 @@ func (t *LayoutShortcut) Del(k []byte) (err error) {
 
 	st, err = t.Layout.Delete(st)
 
-	tl.V("tree,del").Printf("del %v by %3x %q", st, t.Root, k)
-
-	tl.V("root").If(st[0].Off(t.Mask) != t.Root).Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
-	tl.V("root_anyway").If(st[0].Off(t.Mask) == t.Root).Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
+	if tl.V("tree,del") != nil {
+		tl.Printf("del %v by %3x %q", st, t.Root, k)
+	}
+	if tl.V("root").If(st[0].Off(t.Mask) != t.Root) != nil {
+		tl.Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
+	}
 
 	t.Root = st[0].Off(t.Mask)
 
