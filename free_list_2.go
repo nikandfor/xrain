@@ -28,9 +28,9 @@ type (
 
 		flen int64
 
-		deferred []kv2
-		defi     int
-		lock     bool
+		deferred         []kv2
+		defi             int
+		lock, shrinklock bool
 	}
 
 	GrowFreelist struct {
@@ -57,7 +57,7 @@ func NewFreelist2(c *Common, l Layout, root int64) *Freelist2 {
 }
 
 func (f *Freelist2) Alloc(n int) (off int64, err error) {
-	tl.V("alloc,in").Printf("alloc: %2x   ??  ver %x/%x next %x def %x[%d:] from %v", n, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi, tlog.StackTrace(1, 3))
+	tl.V("alloc,in").Printf("alloc: %2x   ??  ver %x/%x next %x def %x[%d:] from %#v", n, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi, tl.VArg("where", tlog.StackTrace(1, 3)))
 	defer func() {
 		tl.V("alloc,out").Printf("alloc: %2x %4x  ver %x/%x next %x def %x[%d:]", n, off, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
 	}()
@@ -105,7 +105,7 @@ next:
 		goto next
 	}
 
-	for _, kv := range f.deferred {
+	for _, kv := range f.deferred { // TODO: go from back to forth
 		if kv.v == flDelete && kv.k == off {
 			goto next
 		}
@@ -172,7 +172,7 @@ func (f *Freelist2) allocGrow(n int) (off int64, err error) {
 
 func (f *Freelist2) Free(off, ver int64, n int) (err error) {
 	var sz uint
-	tl.V("free,in").Printf("freei: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]  from %#v", n, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi, tlog.StackTrace(1, 4))
+	tl.V("free,in").Printf("freei: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]  from %#v", n, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi, tl.VArg("where", tlog.StackTrace(1, 4)))
 	defer func() {
 		tl.V("free,out").Printf("freeo: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]", 1<<sz, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi)
 	}()
@@ -230,7 +230,7 @@ more:
 	}
 
 fin:
-	tl.V("merge").Printf("free   merged %4x n %d ver %x  def %x", off, n, ver, f.deferred)
+	tl.V("merge").If(n != 1<<sz).Printf("free   merged %4x n %d   to logsize %x (size %d)  ver %x  def %x", off, n, sz, 1<<sz, ver, f.deferred)
 	f.deferOp(off|int64(sz), ver)
 
 	err = f.unlock()
@@ -239,19 +239,24 @@ fin:
 }
 
 func (f *Freelist2) unlock() (err error) {
-	tl.V("unlock").Printf("unlock: next %x/%x deff %x ver %d/%d lock %v from %#v", f.FileNext, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tlog.StackTrace(1, 2))
+	tl.V("unlock").Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.FileNext, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2)))
 	if f.lock {
 		return
 	}
 	f.lock = true
+	tl.V("unlock_locked").
+		If(tl.V("unlock") == nil).Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.FileNext, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2)))
 
 	var buf [16]byte
+	i := 0
 
-	for i := 0; i < len(f.deferred); i++ { // for range is not applicable here
+more:
+	for ; i < len(f.deferred); i++ { // for range is not applicable here
 		kv := f.deferred[i]
 		f.defi = i
 
-		tl.V("unlockop").Printf("op     %x %x  el %d of %x", kv.k, kv.v, i, f.deferred)
+		tl.V("unlockop").Printf("op     %3x %3x  el %2d of %x", kv.k, kv.v, i, f.deferred)
+		//	tl.V("dump").Printf("dump  fl root %x\n%v", f.t.Root, f.l.(fileDumper).dumpFile())
 
 		binary.BigEndian.PutUint64(buf[:8], uint64(kv.k))
 		if kv.v == flDelete {
@@ -265,19 +270,35 @@ func (f *Freelist2) unlock() (err error) {
 		}
 	}
 
+	err = f.shrinkFile()
+	if err != nil {
+		return
+	}
+
+	if i < len(f.deferred) {
+		goto more
+	}
+
 	f.deferred = f.deferred[:0]
 	f.defi = -1
 	f.lock = false
-
-	err = f.shrinkFile()
 
 	return
 }
 
 func (f *Freelist2) shrinkFile() (err error) {
-	fend := f.FileNext
+	if f.shrinklock {
+		return nil
+	}
+	f.shrinklock = true
+	defer func() {
+		f.shrinklock = false
+	}()
 
-	//	tlog.Printf("try to shrinkFile %d/%d %x\n%v", f.ver, f.Keep, fend, dumpFile(f.pl))
+	fnext := f.FileNext
+
+	tl.V("shrink").Printf("try to shrink file ver/keep %x/%x fnext %x", f.Ver, f.Keep, fnext)
+	//	tl.V("shrink_dump").Printf("\n%v", f.l.(fileDumper).dumpFile())
 
 	for {
 		st := f.t.Prev(nil)
@@ -289,9 +310,9 @@ func (f *Freelist2) shrinkFile() (err error) {
 		bst := int64(binary.BigEndian.Uint64(last))
 		bend := bst&^f.Mask + f.Page<<uint(bst&f.Mask)
 
-		//	tlog.Printf("check last block %x - %x of %x", bst, bend, fend)
+		tl.V("shrink").Printf("check last block %x - %x of %x", bst, bend, fnext)
 
-		if bend != fend {
+		if bend != fnext {
 			break
 		}
 
@@ -306,15 +327,16 @@ func (f *Freelist2) shrinkFile() (err error) {
 			return
 		}
 
-		fend = bst &^ f.Mask
+		fnext = bst &^ f.Mask
 	}
 
-	if fend == f.FileNext {
+	if fnext == f.FileNext {
+		tl.V("shrink").Printf("none was shrinked")
 		return
 	}
 
 	var truncate bool
-	diff := f.flen - fend
+	diff := f.flen - fnext
 	switch {
 	case f.flen < 8*f.Page:
 	case f.flen < 64*KB:
@@ -328,17 +350,19 @@ func (f *Freelist2) shrinkFile() (err error) {
 	}
 
 	if truncate {
-		err = f.Truncate(fend)
+		tl.V("shrink").Printf("truncate file")
+
+		err = f.Truncate(fnext)
 		if err != nil {
 			return
 		}
 
-		f.flen = fend
+		f.flen = fnext
 	}
 
-	//	log.Printf("file shrunk %x <- %x", fend, f.FileNext)
+	tl.V("shrink,shrink_yes").Printf("file shrunk %x <- %x", fnext, f.FileNext)
 
-	f.FileNext = fend
+	f.FileNext = fnext
 
 	return
 }

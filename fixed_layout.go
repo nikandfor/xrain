@@ -57,7 +57,7 @@ func (l *FixedLayout) datavaloff(leaf bool, i int) int {
 	}
 }
 
-func (l *FixedLayout) pagedatasize(isleaf bool) int {
+func (l *FixedLayout) pagerowsize(isleaf bool) int {
 	if isleaf {
 		return l.fkv
 	} else {
@@ -90,6 +90,24 @@ func (l *FixedLayout) SetKVSize(ff, k, v, pm int) {
 	l.kv = k + v
 	l.pm = pm
 	l.p = l.Page * int64(pm)
+}
+
+func (l *FixedLayout) Alloc() (int64, error) {
+	off, err := l.Freelist.Alloc(l.pm)
+	if err != nil {
+		return NilPage, err
+	}
+
+	tl.V("lalloc").Printf("layout alloc %3x %d", off, l.pm)
+
+	p := l.Access(off, 0x10)
+	l.setleaf(p, true)
+	l.setnkeys(p, 0)
+	l.setoverflow(p, l.pm-1)
+	l.setver(p, l.Ver)
+	l.Unlock(p)
+
+	return off, nil
 }
 
 func (l *FixedLayout) Free(off int64) error {
@@ -393,7 +411,9 @@ again:
 
 		isleaf := l.isleaf(p)
 		n := l.nkeys(p)
-		split = l.dataoff(isleaf, n+1) >= int(l.p)
+		split = l.dataoff(isleaf, n+1) > int(l.p)
+
+		tl.If(split).V("insert,split").Printf("split %3x  %d / %d  by %q %q  free %x / %x", off, i, n, k, v, int(l.p)-l.dataoff(isleaf, n), l.p)
 
 		if alloc || split {
 			return
@@ -449,7 +469,7 @@ func (l *FixedLayout) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 	dst := l.dataoff(isleaf, i)
 
 	if i < n {
-		size := l.pagedatasize(isleaf)
+		size := l.pagerowsize(isleaf)
 		copy(p[dst+size:], p[dst:l.p])
 	}
 
@@ -595,8 +615,8 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 
 		tl.V("out").Printf("out push root %x <- %x, %x", root, off0, off1)
 
-		l.appendLink(root, 0, off0)
-		l.appendLink(root, 1, off1)
+		l.rootAppendLink(root, 0, off0)
+		l.rootAppendLink(root, 1, off1)
 
 		s = append(s, 0)
 		copy(s[1:], s)
@@ -655,22 +675,18 @@ again:
 	return off, nil
 }
 
-func (l *FixedLayout) appendLink(root int64, i int, off int64) {
+func (l *FixedLayout) rootAppendLink(root int64, i int, off int64) {
 	p, cp := l.Access2(root, l.p, off, l.p)
 	func() {
 		l.setleaf(p, false)
 		l.setver(p, l.Ver)
+		l.setoverflow(p, l.pm-1)
 
 		st := l.dataoff(false, i)
 		cleaf := l.isleaf(cp)
-		cst := l.dataoff(cleaf, l.nkeys(cp)-1)
+		cst := l.datakeyoff(cleaf, l.nkeys(cp)-1)
 
-		ff := 0
-		if cleaf {
-			ff = l.ff
-		}
-
-		copy(p[st:], cp[cst+ff:cst+ff+l.k])
+		copy(p[st:], cp[cst:cst+l.k])
 
 		binary.BigEndian.PutUint64(p[st+l.k:], uint64(off))
 
@@ -689,6 +705,8 @@ func (l *FixedLayout) Delete(st Stack) (_ Stack, err error) {
 	if err != nil {
 		return
 	}
+
+	st[len(st)-1] = MakeOffIndex(off, i)
 
 	return l.out(st, off, NilPage, 0, rebalance)
 }
@@ -711,6 +729,8 @@ again:
 		end := l.dataoff(isleaf, n-1)
 
 		rebalance = end < int(l.p)*2/5
+
+		tl.If(rebalance).V("delete,rebalance").Printf("rebalance %3x  %d / %d   used %3x / %3x", off, i, n, l.dataoff(isleaf, n), l.p)
 
 		if alloc {
 			return
@@ -845,7 +865,7 @@ func (l *FixedLayout) dumpPage(off int64) string {
 		ver := l.pagever(p)
 		over := l.overflow(p)
 		n = l.nkeys(p)
-		fmt.Fprintf(&buf, "%4x: %c over %2d ver %3d  nkeys %4d  ", off, tp, over, ver, n)
+		fmt.Fprintf(&buf, "%4x: %c over %2x ver %3x  nkeys %3x  ", off, tp, over, ver, n)
 		fmt.Fprintf(&buf, "datasize %3x free space %3x\n", n*16, len(p)-n*16-16)
 	}
 	l.Unlock(p)

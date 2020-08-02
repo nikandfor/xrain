@@ -245,10 +245,15 @@ func TestFreelist2Alloc2(t *testing.T) {
 }
 
 func TestFreelist2Auto(t *testing.T) {
+	if testing.Short() {
+		return
+	}
+
 	initLogger(t)
 
-	const Page = 0x40
-	const N, M = 5000, 0
+	const Page = 0x100
+	const Mask = Page - 1
+	const N, M = 2000, 4
 
 	rnd := rand.New(rand.NewSource(0))
 
@@ -265,19 +270,26 @@ func TestFreelist2Auto(t *testing.T) {
 	fl := NewFreelist2(c, l, 0)
 	c.Freelist = fl
 
-	type mem struct {
-		off int64
-		n   int
-	}
-	var alloc []mem
+	var alloc Stack
 
 	check := func(pr bool) {
+		npages := int(fl.FileNext / Page)
 		var tree, free, used int64
-		pages := make([]byte, fl.FileNext/Page)
-		sizes := make([]byte, fl.FileNext/Page)
+		pages := make([]byte, npages)
+		sizes := make([]byte, npages)
+		index := make([]byte, npages)
 		for i := range pages {
-			pages[i] = '_'
+			pages[i] = '?'
 			sizes[i] = ' '
+			index[i] = ' '
+		}
+		wid := len(fmt.Sprintf("%x", fl.FileNext))
+		for i := 0; i < npages; i += 8 {
+			a := fmt.Sprintf("%0*x", wid, i*Page)
+
+			if i+len(a) <= len(index) {
+				copy(index[i:], a)
+			}
 		}
 
 		var walk func(int64)
@@ -322,41 +334,61 @@ func TestFreelist2Auto(t *testing.T) {
 
 			free += 1 << size
 
-			i := 0
-			for ; i < 1<<size; i++ {
-				idx := int(off/Page) + i
-				pages[idx] = 'f'
-			}
-			copy(sizes[off/Page:], fmt.Sprintf("%x", 1<<size))
+			func() {
+				defer func() {
+					perr := recover()
+					if perr != nil {
+						tl.Printf("PANIC: %v", perr)
+					}
+				}()
+				i := 0
+				for ; i < 1<<size; i++ {
+					idx := int(off/Page) + i
+					pages[idx] = 'f'
+				}
+				copy(sizes[off/Page:], fmt.Sprintf("%x", 1<<size))
+			}()
 		}
 
 		for _, m := range alloc {
-			used += 1 << nsize(m.n)
+			off, n := m.OffIndex(Mask)
+			used += 1 << nsize(n)
 
-			i := 0
-			for ; i < m.n; i++ {
-				pages[int(m.off/Page)+i] = 'u'
+			for i := 0; i < 1<<nsize(n); i++ {
+				pages[int(off/Page)+i] = 'u'
 			}
-			for ; i < 1<<nsize(m.n); i++ {
-				pages[int(m.off/Page)+i] = '-'
-			}
+			/*
+				i := 0
+				for ; i < n; i++ {
+					pages[int(off/Page)+i] = 'u'
+				}
+				for ; i < 1<<nsize(n); i++ {
+					pages[int(off/Page)+i] = '-'
+				}
+			*/
 
-			copy(sizes[m.off/Page:], fmt.Sprintf("%x", 1<<nsize(m.n)))
+			copy(sizes[off/Page:], fmt.Sprintf("%x", 1<<nsize(n)))
 		}
 
-		if pr != (tl.V("each") != nil) {
-			tl.Printf("in use: %x", alloc)
+		if pr != (tl.V("each").Valid()) {
+			tl.Printf("in use: %v", alloc)
 			tl.Printf("dump root %x next %x  ver %x %x", fl.t.Root, fl.FileNext, c.Ver, c.Keep)
-			tl.Printf("pages %s <- %x = %x * %x", pages, fl.FileNext, fl.FileNext/Page, Page)
+			tl.Printf("pages %s <- %x = %x * %x", pages, fl.FileNext, npages, Page)
 			tl.Printf("sizes %s", sizes)
-			tl.Printf("\n%v", l.dumpFile())
+			tl.Printf("index %s", index)
 		}
 
-		frac := float64(free) / float64(fl.FileNext/Page)
+		tot := float64(npages)
+		eq := "=="
 		if tree+free+used != fl.FileNext/Page {
-			t.Errorf("tree %x + free %x (%.2f) + used %x != file size %x", tree, free, frac, used, fl.FileNext/Page)
-		} else if pr {
-			tl.Printf("tree %x + free %x (%.2f) + used %x == file size %x", tree, free, frac, used, fl.FileNext/Page)
+			eq = "!="
+			t.Fail()
+		}
+
+		tl.If(eq == "!=" || pr != (tl.V("each").Valid())).Printf("tree %2x + free %3x (%.2f) + used %4x (%.2f) %s file size %x", tree, free, float64(free)/tot, used, float64(used)/tot, eq, npages)
+
+		if pr != (tl.V("each").Valid()) {
+			tl.V("dump,check_dump").Printf("\n%v", l.dumpFile())
 		}
 	}
 
@@ -368,31 +400,33 @@ func TestFreelist2Auto(t *testing.T) {
 
 		if rnd.Intn(2) == 0 {
 			n := rnd.Intn(1<<M) + 1
-			tl.V("cmd").Printf("alloc%% %d       - ver %d", n, ver)
+			tl.V("cmd").Printf("alloc%% %d        - ver %x", n, ver)
 
 			off, err := fl.Alloc(n)
 			if !assert.NoError(t, err) {
 				break
 			}
-			alloc = append(alloc, mem{off: off, n: n})
+			alloc = append(alloc, MakeOffIndex(off, n))
 
 			//	tl.Printf("alloced %d at %x, next: %x", n, off, fl.FileNext)
-			p := b.Access(off, 0x10)
+			p := b.Access(off, Page)
 			l.setver(p, ver) //nolint:scopelint
 			l.setoverflow(p, n-1)
 			l.setnkeys(p, 0)
+			l.pageInsert(p, 0, 0, 0xff, []byte("datakey_"), []byte("_value_|"))
+			copy(p[0x18:], p[0x8:0x10])
 			b.Unlock(p)
 		} else if len(alloc) != 0 {
 			i := rand.Intn(len(alloc))
-			m := alloc[i]
-			tl.V("cmd").Printf("free %% %d %5x - ver %d", m.n, m.off, ver)
+			off, n := alloc[i].OffIndex(Mask)
+			tl.V("cmd").Printf("free %% %d %6x - ver %x", n, off, ver)
 
 			var ver int64
-			p := b.Access(m.off, 0x10)
+			p := b.Access(off, 0x10)
 			ver = l.pagever(p)
 			b.Unlock(p)
 
-			err := fl.Free(m.off, ver, m.n)
+			err := fl.Free(off, ver, n)
 			if !assert.NoError(t, err) {
 				break
 			}
@@ -429,6 +463,7 @@ func TestFreelistShrinkFile(t *testing.T) {
 
 	l := NewFixedLayout(c)
 	fl := NewFreelist2(c, l, 0)
+	c.Freelist = fl
 
 	c.Ver, c.Keep = 1, -1
 	off1, err := fl.Alloc(1)
@@ -447,18 +482,18 @@ func TestFreelistShrinkFile(t *testing.T) {
 	assert.NoError(t, err)
 
 	c.Ver, c.Keep = 5, 1
-	fl.Free(1, off1, 1)
+	fl.Free(off1, 1, 1)
 
 	c.Ver, c.Keep = 6, 5
-	fl.Free(2, off2, 2)
+	fl.Free(off2, 2, 2)
 
 	c.Ver, c.Keep = 7, 5
-	fl.Free(1, off3, 3)
+	fl.Free(off3, 3, 1)
 
 	next := fl.FileNext
 
 	c.Ver, c.Keep = 8, 6
-	fl.Free(3, off4, 4)
+	fl.Free(off4, 4, 3)
 
 	if fl.FileNext >= next {
 		t.Errorf("file didn't shrink")
@@ -484,4 +519,76 @@ func TestFreelistShrinkFile(t *testing.T) {
 	tl.Printf("next %x, pages %x %x %x %x", fl.FileNext, off1, off2, off3, off4)
 
 	//	tlog.Printf("file: %x\n%v", fl.FileNext, dumpFile(pl))
+}
+
+func BenchmarkFreelist2(t *testing.B) {
+	t.ReportAllocs()
+
+	const Page, M = 0x100, 3
+	const Mask = Page - 1
+
+	rnd := rand.New(rand.NewSource(0))
+
+	b := NewMemBack(1 * Page)
+	c := &Common{
+		Back:     b,
+		Page:     Page,
+		Mask:     Page - 1,
+		Ver:      1,
+		FileNext: Page,
+	}
+
+	l := NewFixedLayout(c)
+	fl := NewFreelist2(c, l, 0)
+	c.Freelist = fl
+
+	var alloc Stack
+
+	for ver := int64(1); ver <= int64(t.N); ver++ {
+		c.Ver = ver
+		c.Keep = ver - 1
+
+		if rnd.Intn(2) == 0 {
+			n := rnd.Intn(1<<M) + 1
+			tl.V("cmd").Printf("alloc%% %d       - ver %x", n, ver)
+
+			off, err := fl.Alloc(n)
+			if !assert.NoError(t, err) {
+				break
+			}
+			alloc = append(alloc, MakeOffIndex(off, n))
+
+			//	tl.Printf("alloced %d at %x, next: %x", n, off, fl.FileNext)
+			p := b.Access(off, Page)
+			l.setver(p, ver) //nolint:scopelint
+			l.setoverflow(p, n-1)
+			l.setnkeys(p, 0)
+			l.pageInsert(p, 0, 0, 0xff, []byte("datakey_"), []byte("_value_|"))
+			copy(p[0x18:], p[0x8:0x10])
+			b.Unlock(p)
+		} else if len(alloc) != 0 {
+			i := rand.Intn(len(alloc))
+			off, n := alloc[i].OffIndex(Mask)
+			tl.V("cmd").Printf("free %% %d %5x - ver %x", n, off, ver)
+
+			var ver int64
+			p := b.Access(off, 0x10)
+			ver = l.pagever(p)
+			b.Unlock(p)
+
+			err := fl.Free(off, ver, n)
+			if !assert.NoError(t, err) {
+				break
+			}
+
+			if i < len(alloc) {
+				copy(alloc[i:], alloc[i+1:])
+			}
+			alloc = alloc[:len(alloc)-1]
+		}
+
+		if t.Failed() {
+			break
+		}
+	}
 }

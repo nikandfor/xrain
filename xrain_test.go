@@ -332,7 +332,8 @@ func (t *HeavyTester) worker(c, r chan HeavyTask) {
 }
 
 var (
-	flagv = flag.String("tlog-v", "", "verbocity topics")
+	flagv  = flag.String("tlog-v", "", "verbocity topics")
+	stderr = flag.Bool("tlog-stderr", false, "log to stderr, not in testing.T")
 
 //	det = flag.Bool("detailed", false, "detailed logs")
 //	no  = flag.Bool("no-logs", false, "hide logs")
@@ -348,11 +349,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-type testWriter struct {
-	t *testing.T
-}
-
-func (t testWriter) Write(p []byte) (int, error) {
+func (t testingWriter) Write(p []byte) (int, error) {
 	l := tlog.Caller(4)
 	_, file, line := l.NameFileLine()
 	file = filepath.Base(file)
@@ -377,14 +374,16 @@ func (t testWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func initLogger(t *testing.T) {
+func initLogger(t testing.TB) {
 	var w io.Writer = log.Writer()
+	ff := tlog.LdetFlags
 
-	if t != nil {
-		w = testWriter{t: t}
+	if t != nil && !*stderr {
+		w = newTestingWriter(t)
+		ff = 0
 	}
 
-	tl = tlog.New(tlog.NewConsoleWriter(w, 0))
+	tl = tlog.New(tlog.NewConsoleWriter(w, ff))
 
 	if *flagv != "" {
 		tl.SetFilter(*flagv)

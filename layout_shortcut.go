@@ -5,7 +5,6 @@ type (
 		Layout
 		Root int64
 		Mask int64
-		st   Stack
 	}
 )
 
@@ -18,17 +17,16 @@ func NewLayoutShortcut(l Layout, root, mask int64) *LayoutShortcut {
 }
 
 func (t *LayoutShortcut) Get(k []byte) (v []byte, ff int) {
-	var eq bool
-	t.st, eq = t.Seek(t.st[:0], t.Root, k)
+	st, eq := t.Seek(nil, t.Root, k)
 	if !eq {
 		return nil, 0
 	}
 
 	if l, ok := t.Layout.(FlagsSupported); ok {
-		ff = l.Flags(t.st)
+		ff = l.Flags(st)
 	}
 
-	v = t.Layout.Value(t.st, nil)
+	v = t.Layout.Value(st, nil)
 
 	return
 }
@@ -41,35 +39,36 @@ func (t *LayoutShortcut) Put(ff int, k, v []byte) (err error) {
 		}
 	}
 
-	t.st, _ = t.Seek(t.st[:0], t.Root, k)
+	st, _ := t.Seek(nil, t.Root, k)
 
-	t.st, err = t.Layout.Insert(t.st, ff, k, v)
+	st, err = t.Layout.Insert(st, ff, k, v)
 	if err != nil {
 		return
 	}
 
-	tl.V("tree,put").Printf("put %x %q %q to %3x : %v", ff, k, v, t.Root, t.st)
-	tl.V("root").If(t.st[0].Off(t.Mask) != t.Root).Printf("root %x <- %x", t.st[0].Off(t.Mask), t.Root)
+	tl.V("tree,put").Printf("put %x %q %q to %3x : %v", ff, k, v, t.Root, st)
+	tl.V("root").If(st[0].Off(t.Mask) != t.Root).Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
+	tl.V("root_anyway").If(st[0].Off(t.Mask) == t.Root).Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
 
-	t.Root = t.st[0].Off(t.Mask)
+	t.Root = st[0].Off(t.Mask)
 
 	return err
 }
 
 func (t *LayoutShortcut) Del(k []byte) (err error) {
-	var eq bool
-	t.st, eq = t.Seek(t.st[:0], t.Root, k)
+	st, eq := t.Seek(nil, t.Root, k)
 	if !eq {
 		return nil
 	}
 
-	t.st, err = t.Layout.Delete(t.st)
+	st, err = t.Layout.Delete(st)
 
-	tl.V("tree,del").Printf("del %v by %3x %q", t.st, t.Root, k)
+	tl.V("tree,del").Printf("del %v by %3x %q", st, t.Root, k)
 
-	tl.V("root").If(t.st[0].Off(t.Mask) != t.Root).Printf("root %x <- %x", t.st[0].Off(t.Mask), t.Root)
+	tl.V("root").If(st[0].Off(t.Mask) != t.Root).Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
+	tl.V("root_anyway").If(st[0].Off(t.Mask) == t.Root).Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
 
-	t.Root = t.st[0].Off(t.Mask)
+	t.Root = st[0].Off(t.Mask)
 
 	return err
 }
