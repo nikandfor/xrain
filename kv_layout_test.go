@@ -97,7 +97,7 @@ func TestKV2InsertSplit(t *testing.T) {
 func TestKV2InsertBig(t *testing.T) {
 	initLogger(t)
 
-	const Page = 0x40
+	const Page = 0x100
 
 	b := NewMemBack(0)
 	c := &Common{
@@ -126,18 +126,33 @@ func TestKV2InsertBig(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, Stack{MakeOffIndex(root, 1)}, st)
 
-	st, err = l.Insert(Stack{MakeOffIndex(root, 2)}, 0x11, []byte("key_b_long"), longval(Page, "longlonglong"))
+	tl.Printf("dump:\n%v", l.dumpFile())
+
+	// big
+	st, err = l.Insert(Stack{MakeOffIndex(root, 2)}, 0x11, []byte("key_b_long"), longval(2*Page, "longlonglong"))
 	assert.NoError(t, err)
-	//	assert.Equal(t, Stack{MakeOffIndex(Page, 1)}, st)
 
 	k, ff := l.Key(st, nil)
 	v := l.Value(st, nil)
 
 	assert.Equal(t, 0x11, ff)
 	assert.Equal(t, []byte("key_b_long"), k)
-	assert.Equal(t, longval(Page, "longlonglong"), v)
+	assert.Equal(t, longval(2*Page, "longlonglong"), v)
 
-	t.Logf("dump:\n%v", hex.Dump(b.d))
+	tl.Printf("dump  st %v\n%v", st, l.dumpFile())
+
+	// really big
+	st, err = l.Insert(st, 0x12, []byte("key_b_long_long"), longval(5*Page, "longlonglong"))
+	assert.NoError(t, err)
+
+	k, ff = l.Key(st, nil)
+	v = l.Value(st, nil)
+
+	assert.Equal(t, 0x12, ff)
+	assert.Equal(t, []byte("key_b_long_long"), k)
+	assert.Equal(t, longval(5*Page, "longlonglong"), v)
+
+	tl.Printf("dump  st %v\n%v", st, l.dumpFile())
 }
 
 func TestKV2PutDel(t *testing.T) {
@@ -155,6 +170,9 @@ func TestKV2Auto(t *testing.T) {
 func longval(l int, v string) []byte {
 	r := make([]byte, l)
 	copy(r, v)
+	for i := len(v); i < len(r); i += 10 {
+		copy(r[i:], "----------")
+	}
 	return r
 }
 

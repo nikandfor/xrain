@@ -783,6 +783,10 @@ again:
 			return
 		}
 
+		if tl.V("insert,triple") != nil {
+			tl.Printf("insert %d / %d  to %3x triple %x %x %x  from %x + %x", i, n, off, page0, page1, page2, len(p), exp)
+		}
+
 		l.pageSplit(p, p0[:page0], p0[page0+page1:], i, n)
 		off1 = off0 + int64(page0)
 
@@ -792,10 +796,14 @@ again:
 		case i == n:
 			l.pageInsert(p0[page0:], 0, 0, ff, k, v)
 		default:
-			l.pagesetheaders(p0[page0:], isleaf, 0)
+			l.pagesetheaders(p0[page0:page0+page1], isleaf, 0)
 			l.pageInsert(p0[page0:], 0, 0, ff, k, v)
 
 			off2 = off1 + int64(page1)
+		}
+
+		if tl.V("triple_dump") != nil {
+			tl.Printf("triple dump %x + %x + %x\n%v", page0, page1, page2, hex.Dump(p0))
 		}
 
 		di = i
@@ -839,7 +847,7 @@ func (l *KVLayout2) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 		dst := l.dataoff(p, n-1)
 
 		if tl.V("insert") != nil {
-			tl.Printf("pageInsert %d / %d move %x - %x on %x", i, n, dst, dend, exp)
+			tl.Printf("insert %d / %d move %x - %x on %x   %2x %.20q %.30q", i, n, dst, dend, exp, ff, k, v)
 		}
 
 		copy(p[dst-exp:], p[dst:dend])
@@ -853,7 +861,7 @@ func (l *KVLayout2) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 	dst := dend - exp
 
 	if tl.V("insert") != nil {
-		tl.Printf("pageInsert %d / %d to   %x - %x (%x)", i, n, dst, dend, exp)
+		tl.Printf("insert %d / %d to    %x - %x (%x)   %2x %.20q %.30q", i, n, dst, dend, exp, ff, k, v)
 	}
 
 	l.setdataoff(p, i, dst)
@@ -950,7 +958,7 @@ func (l *KVLayout2) pageSplit(p, p0, p1 []byte, m, n int) {
 	l.pagesetheaders(p0, isleaf, m)
 	l.pagesetheaders(p1, isleaf, n-m)
 
-	if tl.V("split").V("dump") != nil {
+	if tl.V("split_dump") != nil {
 		tl.Printf("split %d / %d  dump\n%v\n%v\n%v", m, n, hex.Dump(p), hex.Dump(p0), hex.Dump(p1))
 	}
 }
@@ -1028,12 +1036,12 @@ func (l *KVLayout2) pageDelete(p []byte, i, n int) {
 		diff := dend - end
 
 		if tl.V("delete") != nil {
-			tl.Printf("delete %d / %d  move %x-%x <- %x-%x%v", i, n, st+diff, st+diff+end-st, st, end, tl.VArg("dump", "\n"+hex.Dump(p)))
+			tl.Printf("delete %d / %d  move %x-%x <- %x-%x %v", i, n, st+diff, st+diff+end-st, st, end, tl.VArg("delete_dump", "\n"+hex.Dump(p)))
 		}
 
 		copy(p[st+diff:], p[st:end])
 
-		for j := i; j+n < n; j++ {
+		for j := i; j < n; j++ {
 			off := l.dataoff(p, j+1)
 			l.setdataoff(p, j, off+diff)
 		}
@@ -1073,7 +1081,7 @@ func (l *KVLayout2) out(s Stack, off0, off1, off2 int64, di int, rebalance bool)
 					return
 				}
 
-				tl.Printf("deleted rebalanced sibling: off %x\n%v", off, l.dumpPage(off))
+				// tl.Printf("deleted rebalanced sibling: off %x\n%v", off, l.dumpPage(off))
 
 				if di < i {
 					i--
@@ -1219,7 +1227,10 @@ again:
 
 		ck := cp[cst : cst+ckl]
 
-		//	tl.Printf("uppl %x %d cp %x  ckey: %q", off, i, coff, ck)
+		if tl.V("upl") != nil {
+			tl.Printf("upl %x %d cp %x  ckey: %q", off, i, coff, ck)
+			//	tl.Printf("dump cp\n%v", hex.Dump(cp))
+		}
 
 		n := l.nkeys(p)
 		if i < n {
@@ -1255,6 +1266,7 @@ again:
 	binary.BigEndian.PutUint64(v, uint64(coff))
 
 	off0, off1, _, split, err = l.insert(off, i, 0, k, v)
+
 	return
 }
 
@@ -1345,33 +1357,6 @@ func (l *KVLayout2) sibling(st Stack, off int64) (off0, off1 int64, i0, i1 int) 
 	return
 }
 
-//
-
-func MakeOffIndex(off int64, i int) OffIndex {
-	return OffIndex(off) | OffIndex(i)
-}
-
-func (l OffIndex) Off(mask int64) int64 {
-	return int64(l) &^ mask
-}
-
-func (l OffIndex) Index(mask int64) int {
-	return int(int64(l) & mask)
-}
-
-func (l OffIndex) OffIndex(m int64) (int64, int) {
-	return l.Off(m), l.Index(m)
-}
-
-func (st Stack) LastOffIndex(m int64) (int64, int) {
-	last := st[len(st)-1]
-	return last.Off(m), last.Index(m)
-}
-
-func (st Stack) String() string {
-	return fmt.Sprintf("%3x", []OffIndex(st))
-}
-
 func (l *KVLayout2) dumpPage(off int64) string {
 	var buf bytes.Buffer
 
@@ -1399,12 +1384,24 @@ func (l *KVLayout2) dumpPage(off int64) string {
 		st[0] = MakeOffIndex(off, i)
 		k, _ := l.Key(st, nil)
 
+		sk := k
+		if len(sk) > 16 {
+			sk = sk[:16]
+		}
+
+		sks := fmt.Sprintf("%x", sk)
+
 		if isleaf {
 			v := l.Value(st, nil)
-			fmt.Fprintf(&buf, "    %2x -> %2x  | %q -> %q\n", k, v, k, v)
+			sv := v
+			if len(sv) > 8 {
+				sv = sv[:8]
+			}
+			svs := fmt.Sprintf("%x", sv)
+			fmt.Fprintf(&buf, "    %-20.20v -> %16v  | %-20.20q -> %-.40q\n", sks, svs, k, v)
 		} else {
 			v := l.link(st.LastOffIndex(l.Mask))
-			fmt.Fprintf(&buf, "    %2x -> %16x  | %q\n", k, v, k)
+			fmt.Fprintf(&buf, "    %-20.20v -> %16x  | %-20.20q\n", sks, v, k)
 		}
 	}
 
@@ -1442,6 +1439,33 @@ func (l *KVLayout2) pages(s int) int {
 	p := int(l.Page)
 
 	return (s + p - 1) / p * p
+}
+
+//
+
+func MakeOffIndex(off int64, i int) OffIndex {
+	return OffIndex(off) | OffIndex(i)
+}
+
+func (l OffIndex) Off(mask int64) int64 {
+	return int64(l) &^ mask
+}
+
+func (l OffIndex) Index(mask int64) int {
+	return int(int64(l) & mask)
+}
+
+func (l OffIndex) OffIndex(m int64) (int64, int) {
+	return l.Off(m), l.Index(m)
+}
+
+func (st Stack) LastOffIndex(m int64) (int64, int) {
+	last := st[len(st)-1]
+	return last.Off(m), last.Index(m)
+}
+
+func (st Stack) String() string {
+	return fmt.Sprintf("%3x", []OffIndex(st))
 }
 
 func varlen(x int) (n int) {
