@@ -58,38 +58,15 @@ func NewFreelist2(c *Common, l Layout, root int64) *Freelist2 {
 
 func (f *Freelist2) Alloc(n int) (off int64, err error) {
 	if tl.V("alloc") != nil {
-		tl.Printf("alloc: %2x   ??  ver %x/%x next %x def %x[%d:] from %#v", n, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi, tl.VArg("where", tlog.StackTrace(1, 3)))
+		tl.Printf("alloc: %2x   ??   ??  ver %x/%x next %x  def %x[%d:] from %#v %#v", n, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi,
+			tl.VArg("where", tlog.StackTrace(1, 4)), tl.VArg("where2", tlog.StackTrace(5, 4)))
 		defer func() {
-			tl.Printf("alloc: %2x %4x  ver %x/%x next %x def %x[%d:]", n, off, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
+			tl.Printf("alloc: %2x %4x   ??  ver %x/%x next %x  def %x[%d:]", n, off, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
 		}()
 	}
 
 	nsize := nsize(n)
-	used := map[int64]struct{}{}
-	for i := len(f.deferred) - 1; i >= 0; i-- {
-		kv := f.deferred[i]
-		if kv.v == flDelete {
-			used[kv.k] = struct{}{}
-			continue
-		}
-
-		if _, ok := used[kv.k]; ok {
-			continue
-		}
-		if kv.v >= f.Keep && kv.v != f.Ver {
-			continue
-		}
-
-		size := uint(kv.k & f.Mask)
-		if size < nsize {
-			continue
-		}
-		if size == nsize {
-			//	log.Printf("asquired %d found %x %x  ver %x/%x def %x", n, kv.k, kv.v, f.ver, f.Keep, f.deferred)
-			f.deferOp(kv.k, flDelete)
-			return kv.k &^ f.Mask, nil
-		}
-	}
+	// don't return blocks from f.deferred: they are still may be used by freelist tree
 
 	var st Stack
 next:
@@ -180,9 +157,10 @@ func (f *Freelist2) allocGrow(n int) (off int64, err error) {
 func (f *Freelist2) Free(off, ver int64, n int) (err error) {
 	var sz uint
 	if tl.V("free") != nil {
-		tl.Printf("freei: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]  from %#v", n, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi, tl.VArg("where", tlog.StackTrace(1, 4)))
+		tl.Printf("freei: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]  from %#v %#v", n, off, ver, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi,
+			tl.VArg("where", tlog.StackTrace(1, 4)), tl.VArg("where2", tlog.StackTrace(5, 4)))
 		defer func() {
-			tl.Printf("freeo: %2x %4x  ver %x/%x next %x  ver %x  def %x[%d:]", 1<<sz, off, f.Ver, f.Keep, f.FileNext, ver, f.deferred, f.defi)
+			tl.Printf("freeo: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]", 1<<sz, off, ver, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
 		}()
 	}
 
