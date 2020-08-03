@@ -133,7 +133,7 @@ func (b *SimpleBucket) Bucket(k []byte) *SimpleBucket {
 		}
 	}
 
-	st, eq := b.l.Seek(nil, b.t.Root, k)
+	st, eq := b.l.Seek(nil, b.t.Root, k, nil)
 	if !eq {
 		return nil
 	}

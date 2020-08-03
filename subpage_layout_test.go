@@ -14,13 +14,13 @@ func TestSubpageLayout(t *testing.T) {
 
 	//
 
-	_, eq := l.Search([]byte("qwe"))
+	_, eq := l.Search([]byte("qwe"), nil)
 	assert.False(t, eq)
 
 	st := l.Step(nil, 0, false)
 	assert.Nil(t, st)
 
-	st, eq = l.Seek(st[:0], 0, []byte("key"))
+	st, eq = l.Seek(st[:0], 0, []byte("key"), nil)
 	assert.False(t, eq)
 	assert.Nil(t, st)
 
@@ -76,7 +76,7 @@ func TestSubpageLayout(t *testing.T) {
 
 	//
 
-	st, eq = l.Seek(st, 0, []byte("key_a"))
+	st, eq = l.Seek(st, 0, []byte("key_a"), nil)
 	assert.True(t, eq)
 	assert.Equal(t, Stack{1}, st)
 
@@ -90,11 +90,11 @@ func TestSubpageLayout(t *testing.T) {
 
 	//
 
-	st, eq = l.Seek(st, 0, []byte("key_q"))
+	st, eq = l.Seek(st, 0, []byte("key_q"), nil)
 	assert.False(t, eq)
 	assert.Equal(t, Stack{OffIndex(cnt)}, st)
 
-	st, eq = l.Seek(st, 0, []byte("key_aa"))
+	st, eq = l.Seek(st, 0, []byte("key_aa"), nil)
 	assert.True(t, eq)
 	assert.Equal(t, Stack{2}, st)
 	st, err = l.Delete(st)
@@ -102,21 +102,21 @@ func TestSubpageLayout(t *testing.T) {
 
 	tl.Printf("dump\n%v", hex.Dump(l.Bytes()))
 
-	st, eq = l.Seek(st, 0, []byte("key"))
+	st, eq = l.Seek(st, 0, []byte("key"), nil)
 	assert.True(t, eq)
 	st, err = l.Delete(st)
 	assert.NoError(t, err)
 
 	tl.Printf("dump\n%v", hex.Dump(l.Bytes()))
 
-	st, eq = l.Seek(st, 0, []byte("key_b"))
+	st, eq = l.Seek(st, 0, []byte("key_b"), nil)
 	assert.True(t, eq)
 	st, err = l.Delete(st)
 	assert.NoError(t, err)
 
 	tl.Printf("dump\n%v", hex.Dump(l.Bytes()))
 
-	st, eq = l.Seek(st, 0, []byte("key_a"))
+	st, eq = l.Seek(st, 0, []byte("key_a"), nil)
 	assert.True(t, eq)
 	st, err = l.Delete(st)
 	assert.NoError(t, err)

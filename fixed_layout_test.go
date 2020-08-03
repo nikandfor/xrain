@@ -99,7 +99,7 @@ func TestFixedSplitGet(t *testing.T) {
 
 	t.Logf("dump:\n%v", hex.Dump(b.d))
 
-	st, eq := l.Seek(nil, 3*Page, []byte("key_d"))
+	st, eq := l.Seek(nil, 3*Page, []byte("key_d"), nil)
 	assert.Equal(t, Stack{MakeOffIndex(3*Page, 1), MakeOffIndex(2*Page, 1)}, st)
 	assert.True(t, eq)
 

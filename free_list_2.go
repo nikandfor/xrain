@@ -18,6 +18,8 @@ type (
 	Freelist interface {
 		Alloc(n int) (int64, error)
 		Free(off, ver int64, n int) error
+
+		SetCommon(c *Common)
 	}
 
 	Freelist2 struct {
@@ -26,7 +28,8 @@ type (
 
 		*Common
 
-		flen int64
+		meta       SubpageLayout
+		next, flen int64
 
 		deferred         []kv2
 		defi             int
@@ -48,11 +51,27 @@ const flDelete = -1
 func NewFreelist2(c *Common, l Layout, root int64) *Freelist2 {
 	flen := c.Back.Size()
 
-	return &Freelist2{
+	f := &Freelist2{
 		l:      l,
 		t:      NewLayoutShortcut(l, root, c.Mask),
 		Common: c,
 		flen:   flen,
+	}
+
+	f.init()
+
+	return f
+}
+
+func (f *Freelist2) SetCommon(c *Common) {
+	f.Common = c
+
+	f.init()
+}
+
+func (f *Freelist2) init() {
+	if f.Common == nil {
+		return
 	}
 }
 

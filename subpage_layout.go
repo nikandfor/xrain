@@ -2,6 +2,7 @@ package xrain
 
 import (
 	"bytes"
+	"encoding/binary"
 	"sort"
 )
 
@@ -68,14 +69,14 @@ func (l *SubpageLayout) setdataend(i, off int) {
 	l.p[st+1] = byte(off)
 }
 
-func (l *SubpageLayout) Search(k []byte) (i int, eq bool) {
+func (l *SubpageLayout) Search(k, v []byte) (i int, eq bool) {
 	if len(l.p) <= l.is {
 		return 0, false
 	}
 
 	n := l.nkeys()
 
-	keycmp := func(i int) int {
+	keycmp := func(i int) (c int) {
 		st := l.dataoff(i, n)
 		kl := int(l.p[st])
 		st++
@@ -84,7 +85,17 @@ func (l *SubpageLayout) Search(k []byte) (i int, eq bool) {
 
 		//	tl.Printf("cmp %2d  %q ? %q   dst %2x  kl %d", i, ik, k, st, kl)
 
-		return bytes.Compare(ik, k)
+		c = bytes.Compare(ik, k)
+		if c != 0 {
+			return
+		}
+
+		st += kl
+		end := l.dataoff(i+1, n)
+
+		iv := l.p[st:end]
+
+		return bytes.Compare(iv, v)
 	}
 
 	i = sort.Search(n, func(i int) bool {
@@ -96,13 +107,13 @@ func (l *SubpageLayout) Search(k []byte) (i int, eq bool) {
 	return
 }
 
-func (l *SubpageLayout) Seek(st Stack, _ int64, k []byte) (_ Stack, eq bool) {
+func (l *SubpageLayout) Seek(st Stack, _ int64, k, v []byte) (_ Stack, eq bool) {
 	if len(l.p) <= l.is {
 		return nil, false
 	}
 
 	var i int
-	i, eq = l.Search(k)
+	i, eq = l.Search(k, v)
 
 	st = append(st[:0], MakeOffIndex(0, i))
 
@@ -181,6 +192,74 @@ func (l *SubpageLayout) Value(st Stack, buf []byte) []byte {
 	return buf
 }
 
+func (l *SubpageLayout) Int64(s Stack) (v int64) {
+	if len(l.p) <= l.is {
+		return 0
+	}
+
+	i := int(s[0])
+	n := l.nkeys()
+
+	st := l.dataoff(i, n)
+	end := l.dataend(i)
+	kl := int(l.p[st])
+	st += 1 + kl
+	sz := end - st
+
+	var buf [8]byte
+	var b []byte
+	if sz >= 8 {
+		b = l.p[end-8 : end]
+	} else {
+		copy(buf[8-sz:], l.p[st:end])
+		b = buf[:]
+	}
+
+	v = int64(binary.BigEndian.Uint64(b))
+
+	return
+}
+
+func (l *SubpageLayout) SetInt64(s Stack, v int64) (old int64, err error) {
+	if len(l.p) <= l.is {
+		panic("unsupported")
+	}
+
+	i := int(s[0])
+	n := l.nkeys()
+
+	st := l.dataoff(i, n)
+	end := l.dataend(i)
+	kl := int(l.p[st])
+	st += 1 + kl
+	sz := end - st
+
+	var buf [8]byte
+	var b []byte
+	if sz >= 8 {
+		b = l.p[end-8 : end]
+	} else {
+		copy(buf[8-sz:], l.p[st:end])
+		b = buf[:]
+	}
+
+	old = int64(binary.BigEndian.Uint64(b))
+
+	binary.BigEndian.PutUint64(b, uint64(v))
+
+	if sz < 8 {
+		copy(l.p[st:end], buf[8-sz:])
+	}
+
+	return
+}
+
+func (l *SubpageLayout) AddInt64(s Stack, v int64) (new int64, err error) {
+	new = l.Int64(s) + v
+	l.SetInt64(s, new)
+	return
+}
+
 func (l *SubpageLayout) Insert(st Stack, _ int, k, v []byte) (Stack, error) {
 	dsize := 1 + len(k) + len(v)
 
@@ -189,7 +268,7 @@ func (l *SubpageLayout) Insert(st Stack, _ int, k, v []byte) (Stack, error) {
 	if len(st) != 0 {
 		i = int(st[0])
 	} else {
-		i, _ = l.Search(k)
+		i, _ = l.Search(k, v)
 	}
 
 	n = l.nkeys()

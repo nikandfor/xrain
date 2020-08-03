@@ -44,7 +44,7 @@ func TestKV2InsertOne(t *testing.T) {
 
 	tl.Printf("dump:\n%v", hex.Dump(b.d))
 
-	st, eq := l.Seek(nil, root, []byte("key_a"))
+	st, eq := l.Seek(nil, root, []byte("key_a"), nil)
 	assert.True(t, eq)
 
 	k, ff := l.Key(st, nil)

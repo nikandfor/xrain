@@ -79,11 +79,36 @@ func (l *FixedLayout) valsize(isleaf bool) int {
 
 func (l *FixedLayout) pagelink(p []byte, i int) (off int64) {
 	isleaf := l.isleaf(p)
-	st := l.datavaloff(isleaf, i)
+	end := l.dataoff(isleaf, i+1)
 
-	off = int64(binary.BigEndian.Uint64(p[st:]))
+	var buf [8]byte
+	var v []byte
+
+	if !isleaf || l.v >= 8 {
+		v = p[end-8 : end]
+	} else {
+		copy(buf[8-l.v:], p[end-l.v:end])
+		v = buf[:]
+	}
+
+	off = int64(binary.BigEndian.Uint64(v))
 
 	return
+}
+
+func (l *FixedLayout) pagesetlink(p []byte, i int, v int64) {
+	isleaf := l.isleaf(p)
+	end := l.dataoff(isleaf, i+1)
+
+	var buf [8]byte
+
+	binary.BigEndian.PutUint64(buf[:], uint64(v))
+
+	if !isleaf || l.v >= 8 {
+		copy(p[end-8:], buf[:])
+	} else {
+		copy(p[end-l.v:], buf[8-l.v:])
+	}
 }
 
 func (l *FixedLayout) SetKVSize(ff, k, v, pm int) {
@@ -219,6 +244,93 @@ func (l *FixedLayout) Value(st Stack, buf []byte) (v []byte) {
 	return l.value(off, i, buf)
 }
 
+func (l *FixedLayout) Int64(st Stack) (v int64) {
+	off, i := st.LastOffIndex(l.Mask)
+
+	p := l.Access(off, l.p)
+	defer l.Unlock(p)
+
+	return l.pagelink(p, i)
+}
+
+func (l *FixedLayout) SetInt64(st Stack, v int64) (old int64, err error) {
+	off, i := st.LastOffIndex(l.Mask)
+
+	var alloc bool
+	var ver int64
+
+again:
+	func() {
+		p := l.Access(off, l.p)
+		defer l.Unlock(p)
+
+		old = l.pagelink(p, i)
+
+		if alloc = l.pagever(p) != l.Ver; alloc {
+			ver = l.pagever(p)
+			return
+		}
+
+		l.pagesetlink(p, i, v)
+	}()
+
+	if alloc {
+		_ = ver
+		off, err = l.realloc(off, l.pm, l.pm)
+		if err != nil {
+			return
+		}
+
+		goto again
+	}
+
+	_, err = l.out(st, off, NilPage, 0, false)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+func (l *FixedLayout) AddInt64(st Stack, v int64) (new int64, err error) {
+	off, i := st.LastOffIndex(l.Mask)
+
+	var alloc bool
+	var ver int64
+
+again:
+	func() {
+		p := l.Access(off, l.p)
+		defer l.Unlock(p)
+
+		new = l.pagelink(p, i) + v
+
+		if alloc = l.pagever(p) != l.Ver; alloc {
+			ver = l.pagever(p)
+			return
+		}
+
+		l.pagesetlink(p, i, new)
+	}()
+
+	if alloc {
+		_ = ver
+		off, err = l.realloc(off, l.pm, l.pm)
+		if err != nil {
+			return
+		}
+
+		goto again
+	}
+
+	_, err = l.out(st, off, NilPage, 0, false)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
 func (l *FixedLayout) value(off int64, i int, buf []byte) (v []byte) {
 	p := l.Access(off, l.p)
 
@@ -244,28 +356,40 @@ func (l *FixedLayout) link(off int64, i int) int64 {
 	return off
 }
 
-func (l *FixedLayout) search(off int64, k []byte) (i, n int, coff int64, eq, isleaf bool) {
+func (l *FixedLayout) search(off int64, k, v []byte) (i, n int, coff int64, eq, isleaf bool) {
+	cmp := l.Compare
+	if cmp == nil {
+		cmp = bytes.Compare
+	}
+
 	p := l.Access(off, l.p)
 	defer l.Unlock(p)
 
-	keycmp := func(i int) int {
+	keycmp := func(i int, val bool) (c int) {
 		isleaf := l.isleaf(p)
 
 		st := l.datakeyoff(isleaf, i)
-		end := l.datavaloff(isleaf, i)
+		vst := l.datavaloff(isleaf, i)
 
-		return bytes.Compare(p[st:end], k)
+		c = cmp(p[st:vst], k)
+		if !val || c != 0 {
+			return
+		}
+
+		end := l.dataoff(isleaf, i+1)
+
+		return cmp(p[vst:end], v)
 	}
 
 	n = l.nkeys(p)
 	isleaf = l.isleaf(p)
 
 	i = sort.Search(n, func(i int) bool {
-		return keycmp(i) >= 0
+		return keycmp(i, true) >= 0
 	})
 
 	if isleaf {
-		eq = i < n && keycmp(i) == 0
+		eq = i < n && keycmp(i, false) == 0
 	} else {
 		if i == n {
 			i--

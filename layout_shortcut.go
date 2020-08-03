@@ -17,7 +17,7 @@ func NewLayoutShortcut(l Layout, root, mask int64) *LayoutShortcut {
 }
 
 func (t *LayoutShortcut) Get(k []byte) (v []byte, ff int) {
-	st, eq := t.Seek(nil, t.Root, k)
+	st, eq := t.Seek(nil, t.Root, k, nil)
 	if !eq {
 		return nil, 0
 	}
@@ -39,7 +39,7 @@ func (t *LayoutShortcut) Put(ff int, k, v []byte) (err error) {
 		}
 	}
 
-	st, _ := t.Seek(nil, t.Root, k)
+	st, _ := t.Seek(nil, t.Root, k, nil)
 
 	if tl.V("tree,put") != nil {
 		tl.Printf("tree %3x  st %v  put %q %q ff %x", t.Root, st, k, v, ff)
@@ -59,7 +59,7 @@ func (t *LayoutShortcut) Put(ff int, k, v []byte) (err error) {
 }
 
 func (t *LayoutShortcut) Del(k []byte) (err error) {
-	st, eq := t.Seek(nil, t.Root, k)
+	st, eq := t.Seek(nil, t.Root, k, nil)
 	if !eq {
 		return nil
 	}
