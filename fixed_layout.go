@@ -28,6 +28,10 @@ func NewFixedLayout(c *Common) *FixedLayout {
 		},
 	}
 
+	l.linkf = l.link
+	l.searchf = l.search
+	l.firstLastf = l.firstLast
+
 	l.SetKVSize(0, 8, 8, 1)
 
 	return l
@@ -89,7 +93,22 @@ func (l *FixedLayout) SetKVSize(ff, k, v, pm int) {
 	l.fkv = ff + k + v
 	l.kv = k + v
 	l.pm = pm
-	l.p = l.Page * int64(pm)
+
+	l.init()
+}
+
+func (l *FixedLayout) SetCommon(c *Common) {
+	l.Common = c
+
+	l.init()
+}
+
+func (l *FixedLayout) init() {
+	if l.Common == nil {
+		return
+	}
+
+	l.p = l.Page * int64(l.pm)
 }
 
 func (l *FixedLayout) Alloc() (int64, error) {
@@ -217,52 +236,12 @@ func (l *FixedLayout) value(off int64, i int, buf []byte) (v []byte) {
 	return
 }
 
-func (l *FixedLayout) link(st Stack) (off int64) {
-	off, i := st.LastOffIndex(l.Mask)
-
+func (l *FixedLayout) link(off int64, i int) int64 {
 	p := l.Access(off, l.p)
 	off = l.pagelink(p, i)
 	l.Unlock(p)
 
-	//	tl.Printf("link: %x %d -> %x %q", st[len(st)-1].Off(l.Mask), st[len(st)-1].Index(l.Mask), off, buf[:])
-
 	return off
-}
-
-func (l *FixedLayout) Seek(st Stack, root int64, k []byte) (_ Stack, eq bool) {
-	st = st[:0]
-
-	if root == NilPage {
-		return nil, false
-	}
-
-	off := root
-	var isleaf bool
-	var i, n int
-	var coff int64
-
-	for !isleaf {
-		i, n, coff, eq, isleaf = l.search(off, k)
-
-		if tl.V("seek") != nil {
-			tl.If(isleaf).Printf("seek root %3x  off %3x -> i %2d / %2d  eq %5v  - leaf", root, off, i, n, eq)
-			tl.If(!isleaf).Printf("seek root %3x  off %3x -> %3x  i %2d / %2d  - branch", root, off, coff, i, n)
-		}
-
-		if !isleaf && i == n {
-			i--
-		}
-
-		st = append(st, MakeOffIndex(off, i))
-
-		off = coff
-	}
-
-	if tl.V("seek,seek_res") != nil {
-		tl.Printf("seek root %3x -> %v  eq %5v by %q [% 2x]", root, st, eq, k, k)
-	}
-
-	return st, eq
 }
 
 func (l *FixedLayout) search(off int64, k []byte) (i, n int, coff int64, eq, isleaf bool) {
@@ -309,8 +288,8 @@ func (l *FixedLayout) firstLast(st Stack, off int64, back bool) Stack {
 	var i int
 
 	for !stop {
-		p := l.Access(off, l.p)
 		func() {
+			p := l.Access(off, l.p)
 			defer l.Unlock(p)
 
 			n := l.nkeys(p)
@@ -339,52 +318,6 @@ func (l *FixedLayout) firstLast(st Stack, off int64, back bool) Stack {
 	return st
 }
 
-func (l *FixedLayout) Step(st Stack, root int64, back bool) Stack {
-	if tl.V("step") != nil {
-		defer func() {
-			tl.Printf("step root %3x -> %v  (back %v)", root, st, back)
-		}()
-	}
-
-	if len(st) == 0 {
-		return l.firstLast(st, root, back)
-	}
-
-	q := len(st) - 1
-	off, i := st[q].OffIndex(l.Mask)
-
-	var n int
-
-	if back && i > 0 {
-		i--
-		goto fin
-	}
-
-	n = l.nKeys(off)
-
-	if i+1 < n {
-		i++
-		goto fin
-	}
-
-	if l.Step(st[:q], NilPage, back) == nil {
-		return nil
-	}
-
-	off = l.link(st[:q])
-
-	if back {
-		i = l.nKeys(off) - 1
-	} else {
-		i = 0
-	}
-
-fin:
-	st[q] = MakeOffIndex(off, i)
-
-	return st
-}
-
 func (l *FixedLayout) Insert(st Stack, ff int, k, v []byte) (_ Stack, err error) {
 	off, i := st.LastOffIndex(l.Mask)
 
@@ -405,15 +338,13 @@ func (l *FixedLayout) Insert(st Stack, ff int, k, v []byte) (_ Stack, err error)
 
 func (l *FixedLayout) insert(off int64, i int, ff int, k, v []byte) (off0, off1 int64, di int, err error) {
 	var alloc, split bool
-	var ver int64
 
 again:
 	p := l.Access(off, l.p)
 	func() {
 		defer l.Unlock(p)
 
-		ver = l.pagever(p)
-		alloc = ver != l.Ver
+		alloc = l.pagever(p) != l.Ver
 
 		isleaf := l.isleaf(p)
 		n := l.nkeys(p)
@@ -430,8 +361,12 @@ again:
 		l.pageInsert(p, i, n, ff, k, v)
 	}()
 
-	if alloc && !split {
-		off, err = l.realloc(off, ver, l.pm, l.pm)
+	if split {
+		return l.insertSplit(off, i, ff, k, v)
+	}
+
+	if alloc {
+		off, err = l.realloc(off, l.pm, l.pm)
 		if err != nil {
 			return
 		}
@@ -439,15 +374,11 @@ again:
 		goto again
 	}
 
-	if !split {
-		return off, NilPage, 0, nil
-	}
-
-	return l.insertSplit(off, ver, i, ff, k, v)
+	return off, NilPage, 0, nil
 }
 
-func (l *FixedLayout) insertSplit(off, ver int64, i, ff int, k, v []byte) (off0, off1 int64, di int, err error) {
-	off, err = l.realloc(off, ver, l.pm, 2*l.pm)
+func (l *FixedLayout) insertSplit(off int64, i, ff int, k, v []byte) (off0, off1 int64, di int, err error) {
+	off, err = l.realloc(off, l.pm, 2*l.pm)
 	if err != nil {
 		return
 	}
@@ -602,7 +533,7 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 		off, i := s[0].OffIndex(l.Mask)
 
 		if i == 0 {
-			p := l.Access(off, l.p)
+			p := l.Access(off, 0x10)
 			ver := l.pagever(p)
 			n := l.nkeys(p)
 			l.Unlock(p)
@@ -611,7 +542,10 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 				copy(s, s[1:])
 				s = s[:len(s)-1]
 
-				l.Freelist.Free(off, ver, l.pm)
+				err = l.Freelist.Free(off, ver, l.pm)
+				if err != nil {
+					return
+				}
 
 				if tl.V("out") != nil {
 					tl.Printf("out pop  root %x -> %v", off, s)
@@ -643,15 +577,13 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 
 func (l *FixedLayout) updatePageLink(off int64, i int, coff int64) (_ int64, err error) {
 	var alloc bool
-	var ver int64
 
 again:
 	p, cp := l.Access2(off, l.p, coff, l.p)
 	func() {
 		defer l.Unlock2(p, cp)
 
-		ver = l.pagever(p)
-		alloc = ver != l.Ver
+		alloc = l.pagever(p) != l.Ver
 
 		isleaf := l.isleaf(p)
 		cisleaf := l.isleaf(cp)
@@ -679,7 +611,7 @@ again:
 	}()
 
 	if alloc {
-		off, err = l.realloc(off, ver, l.pm, l.pm)
+		off, err = l.realloc(off, l.pm, l.pm)
 		if err != nil {
 			return
 		}
@@ -730,15 +662,13 @@ func (l *FixedLayout) Delete(st Stack) (_ Stack, err error) {
 
 func (l *FixedLayout) delete(off int64, i int) (_ int64, _ bool, err error) {
 	var rebalance, alloc bool
-	var ver int64
 
 again:
-	p := l.Access(off, l.p)
 	func() {
+		p := l.Access(off, l.p)
 		defer l.Unlock(p)
 
-		ver = l.pagever(p)
-		alloc = ver != l.Ver
+		alloc = l.pagever(p) != l.Ver
 
 		n := l.nkeys(p)
 		isleaf := l.isleaf(p)
@@ -759,7 +689,7 @@ again:
 	}()
 
 	if alloc {
-		off, err = l.realloc(off, ver, l.pm, l.pm)
+		off, err = l.realloc(off, l.pm, l.pm)
 		if err != nil {
 			return
 		}
@@ -785,8 +715,8 @@ func (l *FixedLayout) rebalance(st Stack, off int64) (di int, err error) {
 	var merge bool
 	var ver int64
 
-	p0, p1 := l.Access2(off0, l.p, off1, l.p)
 	func() {
+		p0, p1 := l.Access2(off0, l.p, off1, l.p)
 		defer l.Unlock2(p0, p1)
 
 		isleaf := l.isleaf(p0)
@@ -897,10 +827,10 @@ func (l *FixedLayout) dumpPage(off int64) string {
 
 		if isleaf {
 			v := l.Value(st, nil)
-			fmt.Fprintf(&buf, "    %2x -> %2x    | %q -> %q\n", k, v, k, v)
+			fmt.Fprintf(&buf, "    %2x -> %2x  | %q -> %q\n", k, v, k, v)
 		} else {
-			v := l.link(st)
-			fmt.Fprintf(&buf, "    %2x -> %4x    | %q\n", k, v, k)
+			v := l.link(st.LastOffIndex(l.Mask))
+			fmt.Fprintf(&buf, "    %2x -> %16x  | %q\n", k, v, k)
 		}
 	}
 
@@ -924,7 +854,11 @@ func (l *FixedLayout) dumpFile() string {
 
 		buf.WriteString(s)
 
-		off += l.p
+		p := b.Access(off, 0x10)
+		ps := 1 + l.overflow(p)
+		b.Unlock(p)
+
+		off += l.p * int64(ps)
 	}
 
 	return buf.String()

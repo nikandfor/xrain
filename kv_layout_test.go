@@ -15,14 +15,15 @@ func TestKV2InsertOne(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	fl := NewEverGrowFreelist(&Common{Back: b})
 
 	c := &Common{
-		Back:     b,
-		Page:     Page,
-		Mask:     Page - 1,
-		Freelist: fl,
+		Back: b,
+		Page: Page,
+		Mask: Page - 1,
 	}
+
+	fl := NewEverGrowFreelist(c)
+	c.Freelist = fl
 
 	l := NewKVLayout2(c)
 
@@ -41,7 +42,17 @@ func TestKV2InsertOne(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, Stack{MakeOffIndex(root, 1)}, st)
 
-	t.Logf("dump:\n%v", hex.Dump(b.d))
+	tl.Printf("dump:\n%v", hex.Dump(b.d))
+
+	st, eq := l.Seek(nil, root, []byte("key_a"))
+	assert.True(t, eq)
+
+	k, ff := l.Key(st, nil)
+	v := l.Value(st, nil)
+
+	assert.Equal(t, 0x1, ff)
+	assert.Equal(t, []byte("key_a"), k)
+	assert.Equal(t, []byte("value_a"), v)
 }
 
 func TestKV2InsertSplit(t *testing.T) {
@@ -50,14 +61,14 @@ func TestKV2InsertSplit(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	fl := NewEverGrowFreelist(&Common{Back: b})
-
 	c := &Common{
-		Back:     b,
-		Page:     Page,
-		Mask:     Page - 1,
-		Freelist: fl,
+		Back: b,
+		Page: Page,
+		Mask: Page - 1,
 	}
+
+	fl := NewEverGrowFreelist(c)
+	c.Freelist = fl
 
 	l := NewKVLayout2(c)
 
@@ -78,7 +89,7 @@ func TestKV2InsertSplit(t *testing.T) {
 
 	st, err = l.Insert(Stack{MakeOffIndex(root, 1)}, 0x11, []byte("key_ab"), []byte("value_ab"))
 	assert.NoError(t, err)
-	assert.Equal(t, Stack{MakeOffIndex(Page, 1)}, st)
+	assert.Len(t, st, 2)
 
 	t.Logf("dump:\n%v", hex.Dump(b.d))
 }
@@ -115,11 +126,30 @@ func TestKV2InsertBig(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, Stack{MakeOffIndex(root, 1)}, st)
 
-	st, err = l.Insert(Stack{MakeOffIndex(root, 1)}, 0x11, []byte("key_long"), longval(Page, "longlonglong"))
+	st, err = l.Insert(Stack{MakeOffIndex(root, 2)}, 0x11, []byte("key_b_long"), longval(Page, "longlonglong"))
 	assert.NoError(t, err)
-	assert.Equal(t, Stack{MakeOffIndex(Page, 1)}, st)
+	//	assert.Equal(t, Stack{MakeOffIndex(Page, 1)}, st)
+
+	k, ff := l.Key(st, nil)
+	v := l.Value(st, nil)
+
+	assert.Equal(t, 0x11, ff)
+	assert.Equal(t, []byte("key_b_long"), k)
+	assert.Equal(t, longval(Page, "longlonglong"), v)
 
 	t.Logf("dump:\n%v", hex.Dump(b.d))
+}
+
+func TestKV2PutDel(t *testing.T) {
+	l := NewKVLayout2(nil)
+
+	testLayoutPutDel(t, l)
+}
+
+func TestKV2Auto(t *testing.T) {
+	l := NewKVLayout2(nil)
+
+	testLayoutAuto(t, l)
 }
 
 func longval(l int, v string) []byte {

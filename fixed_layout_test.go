@@ -127,6 +127,13 @@ func TestFixedSplitGet(t *testing.T) {
 }
 
 func TestFixedPutDel(t *testing.T) {
+	l := NewFixedLayout(nil)
+	l.SetKVSize(1, 5, 7, 1)
+
+	testLayoutPutDel(t, l)
+}
+
+func testLayoutPutDel(t *testing.T, l Layout) {
 	initLogger(t)
 
 	const Page = 0x40
@@ -141,8 +148,7 @@ func TestFixedPutDel(t *testing.T) {
 	fl := NewEverGrowFreelist(c)
 	c.Freelist = fl
 
-	l := NewFixedLayout(c)
-	l.SetKVSize(1, 5, 7, 1)
+	l.SetCommon(c)
 
 	tr := NewLayoutShortcut(l, NilPage, Page-1)
 
@@ -158,7 +164,7 @@ func TestFixedPutDel(t *testing.T) {
 	err = tr.Put(0x4, []byte("key_d"), []byte("value_d"))
 	assert.NoError(t, err)
 
-	t.Logf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
+	tl.Printf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
 
 	err = tr.Del([]byte("key_a"))
 	assert.NoError(t, err)
@@ -166,7 +172,7 @@ func TestFixedPutDel(t *testing.T) {
 	err = tr.Del([]byte("key_d"))
 	assert.NoError(t, err)
 
-	t.Logf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
+	tl.Printf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
 
 	v, ff := tr.Get([]byte("key_b"))
 	assert.Equal(t, []byte("value_b"), v)
@@ -178,6 +184,13 @@ func TestFixedPutDel(t *testing.T) {
 }
 
 func TestFixedAuto(t *testing.T) {
+	l := NewFixedLayout(nil)
+	l.SetKVSize(1, 7, 9, 1)
+
+	testLayoutAuto(t, l)
+}
+
+func testLayoutAuto(t *testing.T, l Layout) {
 	initLogger(t)
 
 	const Page = 0x80
@@ -193,8 +206,7 @@ func TestFixedAuto(t *testing.T) {
 	fl := NewEverGrowFreelist(c)
 	c.Freelist = fl
 
-	l := NewFixedLayout(c)
-	l.SetKVSize(1, 7, 9, 1)
+	l.SetCommon(c)
 
 	tr := NewLayoutShortcut(l, NilPage, Page-1)
 
@@ -216,8 +228,6 @@ func TestFixedAuto(t *testing.T) {
 
 	check := func() bool {
 		var last []byte
-
-		tl.V("dump").Printf("dump  root %x\n%v", tr.Root, l.dumpFile())
 
 		n := 0
 		for st := tr.First(nil); st != nil; st = tr.Next(st) {
@@ -257,12 +267,12 @@ func TestFixedAuto(t *testing.T) {
 			v := value(j)
 			switch i % 4 {
 			case 0, 1:
-				tl.V("cmd").Printf("put %q -> %q", k, v)
+				tl.V("cmd").Printf("CMD put %q -> %q  %x / %x", k, v, i, N)
 				exp[string(k)] = v
 				cnt[string(k)]++
 				err = tr.Put(j, k, v)
 			case 2:
-				tl.V("cmd").Printf("del %q", k)
+				tl.V("cmd").Printf("CMD del %q        %x / %x", k, i, N)
 				if c := cnt[string(k)]; c > 0 {
 					cnt[string(k)]--
 					if c == 1 {
@@ -280,7 +290,7 @@ func TestFixedAuto(t *testing.T) {
 			assert.NoError(t, err)
 
 			if i%4 != 3 {
-				tl.V("each").Printf("dump: %x\n%v", tr.Root, l.dumpFile())
+				tl.V("each_dump").Printf("dump  root %x\n%v", tr.Root, l.(fileDumper).dumpFile())
 			}
 
 			if !check() {
@@ -289,14 +299,14 @@ func TestFixedAuto(t *testing.T) {
 		}
 
 		if tl.V("each") == nil {
-			tl.Printf("dump: %x\n%v", tr.Root, l.dumpFile())
+			tl.Printf("dump: %x\n%v", tr.Root, l.(fileDumper).dumpFile())
 		}
 
 		for st := tr.First(nil); st != nil; st = tr.First(st) {
 
 			key, _ := tr.Key(st, nil)
 
-			tl.V("cmd").Printf("del %q", key)
+			tl.V("cmd").Printf("cmd del %q", key)
 
 			if c := cnt[string(key)]; c > 0 {
 				cnt[string(key)]--
@@ -307,7 +317,7 @@ func TestFixedAuto(t *testing.T) {
 			_, err = tr.Delete(st)
 			assert.NoError(t, err)
 
-			tl.V("each").Printf("dump: %x\n%v", tr.Root, l.dumpFile())
+			tl.V("each").Printf("dump: %x\n%v", tr.Root, l.(fileDumper).dumpFile())
 
 			if !check() {
 				return
@@ -321,14 +331,14 @@ func TestFixedAuto(t *testing.T) {
 			key, ff := tr.Key(st, nil)
 			val := tr.Value(st, nil)
 
-			tl.Printf("iter[%3d]  %x %q -> %q   st %v", n, ff, key, val, st)
+			tl.Printf("iter[%3d]  %2x %q -> %q   st %v", n, ff, key, val, st)
 
 			n++
 		}
 
-		tl.Printf("dump: %x\n%v", tr.Root, l.dumpFile())
+		tl.Printf("dump: %x\n%v", tr.Root, l.(fileDumper).dumpFile())
 		tl.Printf("file:\n%v", hex.Dump(b.d))
 	} else if tl.V("each") == nil {
-		tl.Printf("dump: %x\n%v", tr.Root, l.dumpFile())
+		tl.Printf("dump: %x\n%v", tr.Root, l.(fileDumper).dumpFile())
 	}
 }

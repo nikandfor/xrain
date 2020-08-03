@@ -41,13 +41,13 @@ func (t *LayoutShortcut) Put(ff int, k, v []byte) (err error) {
 
 	st, _ := t.Seek(nil, t.Root, k)
 
+	if tl.V("tree,put") != nil {
+		tl.Printf("tree %3x  st %v  put %q %q ff %x", t.Root, st, k, v, ff)
+	}
+
 	st, err = t.Layout.Insert(st, ff, k, v)
 	if err != nil {
 		return
-	}
-
-	if tl.V("tree,put") != nil {
-		tl.Printf("put %x %q %q to %3x : %v", ff, k, v, t.Root, st)
 	}
 	if tl.V("root").If(st[0].Off(t.Mask) != t.Root) != nil {
 		tl.Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
@@ -64,12 +64,13 @@ func (t *LayoutShortcut) Del(k []byte) (err error) {
 		return nil
 	}
 
+	if tl.V("tree,del") != nil {
+		tl.Printf("tree %3x  st %v  del %q", t.Root, st, k)
+	}
+
 	st, err = t.Layout.Delete(st)
 
-	if tl.V("tree,del") != nil {
-		tl.Printf("del %v by %3x %q", st, t.Root, k)
-	}
-	if tl.V("root").If(st[0].Off(t.Mask) != t.Root) != nil {
+	if len(st) != 0 && st[0].Off(t.Mask) != t.Root && tl.V("root") != nil {
 		tl.Printf("root %x <- %x", st[0].Off(t.Mask), t.Root)
 	}
 
