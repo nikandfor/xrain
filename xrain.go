@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"hash/crc64"
 	"sync"
+
+	"github.com/nikandfor/tlog"
 )
 
 const Version = "000"
@@ -14,6 +16,10 @@ var (
 	DefaultPageSize int64 = 4 * KB
 
 	CRCTable = crc64.MakeTable(crc64.ECMA)
+
+	zeros [8]byte
+
+	tl *tlog.Logger = tlog.DefaultLogger // test logger
 )
 
 var ( // errors
@@ -25,9 +31,9 @@ var ( // errors
 
 	00: xrainVVVPPPPPPP\n // VVV - Version, PPPPPPP - page size in hex
 	10: <crc64> <page>
-	20: <ver>   _
-	30: <freelist>
-	xx: <tree>
+	20: <ver>   <root>
+	30: <metalen> <meta>
+	40: ...
 */
 
 type (
@@ -37,8 +43,9 @@ type (
 
 		l    Layout
 		root int64
-		c    Common
-		//rc   *Common
+		Meta
+
+		metaLayout *SubpageLayout
 
 		NoSync bool
 
@@ -51,17 +58,15 @@ type (
 		wmu sync.Mutex
 	}
 
-	Common struct {
+	Meta struct {
 		Back
 
 		Page, Mask int64
 		Ver, Keep  int64
 
-		FileNext int64
-
 		Freelist
 
-		Meta Layout
+		Meta *LayoutShortcut
 	}
 
 	Serializer interface {
@@ -70,10 +75,19 @@ type (
 	}
 )
 
-func NewDB(b Back, page int64, l Layout) (*DB, error) {
+func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
+	if page&(page-1) != 0 || page != 0 && page < 0x100 {
+		panic(page)
+	}
+
+	if l == nil {
+		l = NewKVLayout2(nil)
+	}
+
 	d := &DB{
+		b: b,
 		l: l,
-		c: Common{
+		Meta: Meta{
 			Back: b,
 			Page: page,
 			Mask: page - 1,
@@ -82,22 +96,16 @@ func NewDB(b Back, page int64, l Layout) (*DB, error) {
 		keepl: make(map[int64]int),
 	}
 
-	if l == nil {
-		d.l = NewKVLayout2(&d.c)
+	// root = 4 * page
+
+	fll := NewFixedLayout(nil)
+	d.Freelist, err = NewFreelist2(nil, fll, 5*page, 6*page)
+	if err != nil {
+		return
 	}
 
-	/*
-		t := NewTree(pl, 4*page, page)
+	d.metaLayout = NewSubpageLayout(nil)
 
-		fpl := NewFixedLayout(b, page, nil)
-		flt := NewTree(fpl, 5*page, page)
-		fl := NewFreelist2(b, flt, 6*page, page)
-
-		pl.SetFreelist(fl)
-		fpl.SetFreelist(fl)
-	*/
-
-	var err error
 	if b.Size() == 0 {
 		err = d.initEmpty()
 	} else {
@@ -107,7 +115,10 @@ func NewDB(b Back, page int64, l Layout) (*DB, error) {
 		return nil, err
 	}
 
-	// d.tr = NewTree(pl, d.t.Root(), d.page)
+	d.Meta.Meta = NewLayoutShortcut(d.metaLayout, 0, d.Mask)
+
+	l.SetMeta(&d.Meta)
+	d.Freelist.SetMeta(&d.Meta)
 
 	d.batch = NewBatcher(&d.wmu, d.sync)
 	go d.batch.Run()
@@ -152,7 +163,7 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 
 	d.mu.Lock()
 	d.updateKeep()
-	d.c.Ver++
+	d.Ver++
 	write := d.write
 	d.mu.Unlock()
 
@@ -163,11 +174,14 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 		return err
 	}
 
-	d.writeRoot(write)
+	err = d.writeRoot(write, d.Ver, tx.oldroot)
+	if err != nil {
+		return
+	}
 
 	d.mu.Lock()
-	d.okver = d.c.Ver
-	d.root = tx.root
+	d.okver = d.Ver
+	d.root = tx.oldroot
 	d.write++
 	d.safe++
 	d.mu.Unlock()
@@ -191,7 +205,7 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 
 	d.mu.Lock()
 	d.updateKeep()
-	d.c.Ver++
+	d.Ver++
 	write := d.write
 	d.mu.Unlock()
 
@@ -204,11 +218,14 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 
 	//	tlog.Printf("Update %2d %2d  %2d\n%v", ver, keep, batch, dumpFile(d.t.PageLayout()))
 
-	d.writeRoot(write)
+	err = d.writeRoot(write, d.Ver, tx.oldroot)
+	if err != nil {
+		return
+	}
 
 	d.mu.Lock()
-	d.okver = d.c.Ver
-	d.root = tx.root
+	d.okver = d.Ver
+	d.root = tx.oldroot
 	d.mu.Unlock()
 
 	err = d.batch.Wait(batch)
@@ -237,28 +254,33 @@ func (d *DB) sync() error {
 }
 
 func (d *DB) updateKeep() {
-	min := d.c.Ver
+	min := d.okver
 	for k := range d.keepl {
 		if k < min {
 			min = k
 		}
 	}
-	d.c.Keep = min
+	d.Keep = min
 }
 
-func (d *DB) writeRoot(writepage int64) {
+func (d *DB) writeRoot(writepage, ver, root int64) (err error) {
 	n := writepage & 0x3
 
-	p := d.b.Access(n*d.c.Page, d.c.Page)
+	m := d.metaLayout.Bytes()
 
-	binary.BigEndian.PutUint64(p[0x20:], uint64(d.c.Ver))
+	if len(m) > int(d.Page)-0x38 {
+		panic("fix me")
+	}
 
-	/*
-		s := 0x30
-		s += d.fl.Serialize(p[s:])
-		s += d.t.Serialize(p[s:])
-		_ = s
-	*/
+	p := d.b.Access(n*d.Page, d.Page)
+
+	binary.BigEndian.PutUint64(p[0x20:], uint64(ver))
+	binary.BigEndian.PutUint64(p[0x28:], uint64(root))
+
+	binary.BigEndian.PutUint64(p[0x30:], uint64(len(m)))
+	copy(p[0x38:], m)
+
+	//
 
 	binary.BigEndian.PutUint64(p[0x10:], 0)
 
@@ -266,74 +288,84 @@ func (d *DB) writeRoot(writepage int64) {
 	binary.BigEndian.PutUint64(p[0x10:], sum)
 
 	d.b.Unlock(p)
+
+	return
 }
 
 func (d *DB) initEmpty() (err error) {
-	if d.c.Page == 0 {
-		d.c.Page = DefaultPageSize
+	if d.Page == 0 {
+		d.Page = DefaultPageSize
 	}
 
-	err = d.b.Truncate(6 * d.c.Page)
+	d.root = 4 * d.Page
+
+	err = d.b.Truncate(6 * d.Page)
 	if err != nil {
 		return
 	}
 
-	h0 := fmt.Sprintf("xrain%3s%7x\n", Version, d.c.Page)
+	h0 := fmt.Sprintf("xrain%3s%7x\n", Version, d.Page)
 	if len(h0) != 16 {
 		panic(len(h0))
 	}
 
-	p := d.b.Access(0, 4*d.c.Page)
+	p := d.b.Access(0, 4*d.Page)
 
 	for i := 0; i < 4; i++ {
-		off := int64(i) * d.c.Page
+		off := int64(i) * d.Page
 
 		copy(p[off:], h0)
 
 		s := off + 0x18
-		binary.BigEndian.PutUint64(p[s:], uint64(d.c.Page))
+		binary.BigEndian.PutUint64(p[s:], uint64(d.Page))
 	}
 
 	d.b.Unlock(p)
 
-	d.writeRoot(0)
+	err = d.writeRoot(0, 0, 0)
+	if err != nil {
+		return
+	}
 
 	return d.b.Sync()
 }
 
 func (d *DB) initExisting() (err error) {
-	if d.c.Page == 0 {
-		d.c.Page = 0x100
+	if d.Page == 0 {
+		d.Page = 0x100
 	}
-
-	var zeros [8]byte
 
 again:
 	retry := false
-	p := d.b.Access(0, 4*d.c.Page)
+
 	func() {
+		p := d.b.Access(0, 4*d.Page)
+		defer d.b.Unlock(p)
+
 		page := int64(binary.BigEndian.Uint64(p[0x18:]))
-		if page != d.c.Page {
-			d.c.Page = page
+		if page != d.Page {
+			d.Page = page
 			retry = true
 			return
 		}
 
-		d.c.Ver = 0
+		d.Ver = 0
 		var latest int64
 		for i := 0; i < 4; i++ {
-			off := int64(i) * d.c.Page
+			off := int64(i) * d.Page
+
 			ver := int64(binary.BigEndian.Uint64(p[off+0x20:]))
-			if ver > d.c.Ver {
+			if ver > d.Ver {
 				latest = off
-				d.c.Ver = ver
+				d.Ver = ver
 				d.safe = int64(i)
 				d.write = d.safe + 1
 			}
 		}
-		p = p[latest : latest+d.c.Page]
+		p = p[latest : latest+d.Page]
 
-		d.okver = d.c.Ver
+		d.okver = d.Ver
+		d.Keep = d.Ver
 
 		sum := crc64.Update(0, CRCTable, p[:0x10])
 		sum = crc64.Update(sum, CRCTable, zeros[:])
@@ -344,26 +376,17 @@ again:
 			return
 		}
 
-		/*
-			d.fl.SetPageSize(d.c.Page)
-			d.t.SetPageSize(d.c.Page)
+		d.Mask = d.Page - 1
 
-			// p is last root page
-			s := 0x30
-			ss, err := d.fl.Deserialize(p[s:])
-			if err != nil {
-				return
-			}
-			s += ss
+		d.root = int64(binary.BigEndian.Uint64(p[0x28:]))
+		metalen := int64(binary.BigEndian.Uint64(p[0x30:]))
 
-			ss, err = d.t.Deserialize(p[s:])
-			if err != nil {
-				return
-			}
-			s += ss
-		*/
+		m := make([]byte, metalen)
+		copy(m, p[0x38:0x38+metalen])
+
+		d.metaLayout.SetBytes(m)
 	}()
-	d.b.Unlock(p)
+
 	if retry {
 		goto again
 	}

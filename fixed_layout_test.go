@@ -16,16 +16,16 @@ func TestFixedInsertOne(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	c := &Common{
+	m := &Meta{
 		Back: b,
 		Page: Page,
 		Mask: Page - 1,
 	}
 
-	fl := NewEverGrowFreelist(c)
-	c.Freelist = fl
+	fl := NewEverGrowFreelist(m)
+	m.Freelist = fl
 
-	l := NewFixedLayout(c)
+	l := NewFixedLayout(m)
 	l.SetKVSize(0, 5, 7, 1)
 
 	root, err := l.Alloc()
@@ -47,16 +47,16 @@ func TestFixedInsertOne(t *testing.T) {
 
 	tr := NewLayoutShortcut(l, root, Page-1)
 
-	v, _ := tr.Get([]byte("key_0"))
+	v, _ := tr.Get([]byte("key_0"), nil)
 	assert.Nil(t, v)
 
-	v, _ = tr.Get([]byte("key_a"))
+	v, _ = tr.Get([]byte("key_a"), nil)
 	assert.Equal(t, []byte("value_a"), v)
 
-	v, _ = tr.Get([]byte("key_b"))
+	v, _ = tr.Get([]byte("key_b"), nil)
 	assert.Equal(t, []byte("value_b"), v)
 
-	v, _ = tr.Get([]byte("key_c"))
+	v, _ = tr.Get([]byte("key_c"), nil)
 	assert.Equal(t, []byte("value_c"), v)
 }
 
@@ -66,16 +66,16 @@ func TestFixedSplitGet(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	c := &Common{
+	m := &Meta{
 		Back: b,
 		Page: Page,
 		Mask: Page - 1,
 	}
 
-	fl := NewEverGrowFreelist(c)
-	c.Freelist = fl
+	fl := NewEverGrowFreelist(m)
+	m.Freelist = fl
 
-	l := NewFixedLayout(c)
+	l := NewFixedLayout(m)
 	l.SetKVSize(1, 5, 7, 1)
 
 	root, err := l.Alloc()
@@ -105,23 +105,23 @@ func TestFixedSplitGet(t *testing.T) {
 
 	tr := NewLayoutShortcut(l, 3*Page, Page-1)
 
-	v, ff := tr.Get([]byte("key_0"))
+	v, ff := tr.Get([]byte("key_0"), nil)
 	assert.Nil(t, v)
 	assert.Equal(t, 0, ff)
 
-	v, ff = tr.Get([]byte("key_a"))
+	v, ff = tr.Get([]byte("key_a"), nil)
 	assert.Equal(t, []byte("value_a"), v)
 	assert.Equal(t, 0x1, ff)
 
-	v, ff = tr.Get([]byte("key_b"))
+	v, ff = tr.Get([]byte("key_b"), nil)
 	assert.Equal(t, []byte("value_b"), v)
 	assert.Equal(t, 0x2, ff)
 
-	v, ff = tr.Get([]byte("key_c"))
+	v, ff = tr.Get([]byte("key_c"), nil)
 	assert.Equal(t, []byte("value_c"), v)
 	assert.Equal(t, 0x3, ff)
 
-	v, ff = tr.Get([]byte("key_d"))
+	v, ff = tr.Get([]byte("key_d"), nil)
 	assert.Equal(t, []byte("value_d"), v)
 	assert.Equal(t, 0x4, ff)
 }
@@ -139,46 +139,46 @@ func testLayoutPutDel(t *testing.T, l Layout) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	c := &Common{
+	m := &Meta{
 		Back: b,
 		Page: Page,
 		Mask: Page - 1,
 	}
 
-	fl := NewEverGrowFreelist(c)
-	c.Freelist = fl
+	fl := NewEverGrowFreelist(m)
+	m.Freelist = fl
 
-	l.SetCommon(c)
+	l.SetMeta(m)
 
 	tr := NewLayoutShortcut(l, NilPage, Page-1)
 
-	err := tr.Put(0x1, []byte("key_a"), []byte("value_a"))
+	err := tr.Put(0x1, []byte("key_a"), []byte("value_a"), nil)
 	assert.NoError(t, err)
 
-	err = tr.Put(0x3, []byte("key_c"), []byte("value_c"))
+	err = tr.Put(0x3, []byte("key_c"), []byte("value_c"), nil)
 	assert.NoError(t, err)
 
-	err = tr.Put(0x2, []byte("key_b"), []byte("value_b"))
+	err = tr.Put(0x2, []byte("key_b"), []byte("value_b"), nil)
 	assert.NoError(t, err)
 
-	err = tr.Put(0x4, []byte("key_d"), []byte("value_d"))
-	assert.NoError(t, err)
-
-	tl.Printf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
-
-	err = tr.Del([]byte("key_a"))
-	assert.NoError(t, err)
-
-	err = tr.Del([]byte("key_d"))
+	err = tr.Put(0x4, []byte("key_d"), []byte("value_d"), nil)
 	assert.NoError(t, err)
 
 	tl.Printf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
 
-	v, ff := tr.Get([]byte("key_b"))
+	err = tr.Del([]byte("key_a"), nil)
+	assert.NoError(t, err)
+
+	err = tr.Del([]byte("key_d"), nil)
+	assert.NoError(t, err)
+
+	tl.Printf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
+
+	v, ff := tr.Get([]byte("key_b"), nil)
 	assert.Equal(t, []byte("value_b"), v)
 	assert.Equal(t, 0x2, ff)
 
-	v, ff = tr.Get([]byte("key_c"))
+	v, ff = tr.Get([]byte("key_c"), nil)
 	assert.Equal(t, []byte("value_c"), v)
 	assert.Equal(t, 0x3, ff)
 }
@@ -197,16 +197,16 @@ func testLayoutAuto(t *testing.T, l Layout) {
 	const N, Prime, Prime2 = 100, 29, 17
 
 	b := NewMemBack(0)
-	c := &Common{
+	m := &Meta{
 		Back: b,
 		Page: Page,
 		Mask: Page - 1,
 	}
 
-	fl := NewEverGrowFreelist(c)
-	c.Freelist = fl
+	fl := NewEverGrowFreelist(m)
+	m.Freelist = fl
 
-	l.SetCommon(c)
+	l.SetMeta(m)
 
 	tr := NewLayoutShortcut(l, NilPage, Page-1)
 
@@ -270,7 +270,7 @@ func testLayoutAuto(t *testing.T, l Layout) {
 				tl.V("cmd").Printf("CMD put %q -> %q  %x / %x", k, v, i, N)
 				exp[string(k)] = v
 				cnt[string(k)]++
-				err = tr.Put(j, k, v)
+				err = tr.Put(j, k, v, nil)
 			case 2:
 				tl.V("cmd").Printf("CMD del %q        %x / %x", k, i, N)
 				if c := cnt[string(k)]; c > 0 {
@@ -279,9 +279,9 @@ func testLayoutAuto(t *testing.T, l Layout) {
 						delete(exp, string(k))
 					}
 				}
-				err = tr.Del(k)
+				err = tr.Del(k, nil)
 			case 3:
-				val, ff := tr.Get(k)
+				val, ff := tr.Get(k, nil)
 				if v, ok := exp[string(k)]; ok {
 					assert.Equal(t, j&0xff, ff)
 					assert.Equal(t, v, val)

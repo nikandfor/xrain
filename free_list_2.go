@@ -19,17 +19,18 @@ type (
 		Alloc(n int) (int64, error)
 		Free(off, ver int64, n int) error
 
-		SetCommon(c *Common)
+		SetMeta(m *Meta)
 	}
 
 	Freelist2 struct {
 		l Layout // off|size -> ver; size ::= log(n)
 		t *LayoutShortcut
 
-		*Common
+		*Meta
 
 		meta       SubpageLayout
 		next, flen int64
+		root       int64 // to keep it between constructor and SetMeta
 
 		deferred         []kv2
 		defi             int
@@ -37,8 +38,8 @@ type (
 	}
 
 	GrowFreelist struct {
-		*Common
-		flen int64
+		*Meta
+		next, flen int64
 	}
 
 	kv2 struct {
@@ -48,39 +49,89 @@ type (
 
 const flDelete = -1
 
-func NewFreelist2(c *Common, l Layout, root int64) *Freelist2 {
-	flen := c.Back.Size()
+var (
+	_ Freelist = &Freelist2{}
+	_ Freelist = &GrowFreelist{}
+)
 
+func NewFreelist2(m *Meta, l Layout, root, next int64) (_ *Freelist2, err error) {
 	f := &Freelist2{
-		l:      l,
-		t:      NewLayoutShortcut(l, root, c.Mask),
-		Common: c,
-		flen:   flen,
+		l:    l,
+		Meta: m,
+		root: root,
+		next: next,
+	}
+
+	if m != nil {
+		f.t = NewLayoutShortcut(l, root, m.Mask)
+		f.flen = m.Back.Size()
 	}
 
 	f.init()
 
-	return f
+	return f, nil
 }
 
-func (f *Freelist2) SetCommon(c *Common) {
-	f.Common = c
+func (f *Freelist2) SetMeta(m *Meta) {
+	f.Meta = m
+	f.l.SetMeta(m)
 
 	f.init()
 }
 
 func (f *Freelist2) init() {
-	if f.Common == nil {
+	if f.Meta == nil {
 		return
 	}
+
+	if f.Meta.Meta != nil {
+		st, eq := f.Meta.Meta.Seek([]byte("freelist.root"), nil, nil)
+		if eq {
+			f.root = f.Meta.Meta.Layout.Int64(st)
+		}
+
+		st, eq = f.Meta.Meta.Seek([]byte("freelist.next"), nil, nil)
+		if eq {
+			f.next = f.Meta.Meta.Layout.Int64(st)
+		}
+	}
+
+	f.t = NewLayoutShortcut(f.l, f.root, f.Mask)
+	f.flen = f.Back.Size()
+}
+
+func (f *Freelist2) flush() (err error) {
+	if f.Meta == nil || f.Meta.Meta == nil {
+		return
+	}
+
+	_, err = f.Meta.Meta.SetInt64([]byte("freelist.root"), f.t.Root, nil)
+	if err != nil {
+		return
+	}
+	_, err = f.Meta.Meta.SetInt64([]byte("freelist.next"), f.next, nil)
+	if err != nil {
+		return
+	}
+
+	if l, ok := f.l.(*SubpageLayout); ok {
+		err = f.Meta.Meta.Set(0, []byte("freelist.data"), l.Bytes(), nil)
+		if err != nil {
+			return
+		}
+		_, err = f.Meta.Meta.SetInt64([]byte("freelist.next"), f.next, nil)
+	}
+
+	return
 }
 
 func (f *Freelist2) Alloc(n int) (off int64, err error) {
 	if tl.V("alloc") != nil {
-		tl.Printf("alloc: %2x   ??   ??  ver %x/%x next %x  def %x[%d:] from %#v %#v", n, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi,
-			tl.VArg("where", tlog.StackTrace(1, 4)), tl.VArg("where2", tlog.StackTrace(5, 4)))
+		tl.Printf("alloc: %2x   ??   ??  ver %x/%x next %x  def %x[%d:] from %#v %#v", n, f.Ver, f.Keep, f.next, f.deferred, f.defi,
+			tl.VArg("where,where2", tlog.StackTrace(1, 4)), tl.VArg("where2", tlog.StackTrace(5, 4)))
+
 		defer func() {
-			tl.Printf("alloc: %2x %4x   ??  ver %x/%x next %x  def %x[%d:]", n, off, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
+			tl.Printf("alloc: %2x %4x   ??  ver %x/%x next %x  def %x[%d:]", n, off, f.Ver, f.Keep, f.next, f.deferred, f.defi)
 		}()
 	}
 
@@ -91,7 +142,6 @@ func (f *Freelist2) Alloc(n int) (off int64, err error) {
 next:
 	st = f.t.Next(st)
 	if st == nil {
-		// TODO: could alloc less than full block plus align
 		return f.allocGrow(n)
 	}
 	last, _ := f.l.Key(st, nil)
@@ -136,8 +186,8 @@ func (f *Freelist2) allocGrow(n int) (off int64, err error) {
 	sz := nsize(n)
 	p := f.Page << sz
 	pm := p - 1
-	next := f.FileNext + p
-	if next&pm != 0 {
+	next := f.next + p
+	if next&pm != 0 { // use last blocks from tree
 		next = next&^pm + p
 	}
 	f.flen, err = growFile(f.Back, f.Page, next)
@@ -146,11 +196,11 @@ func (f *Freelist2) allocGrow(n int) (off int64, err error) {
 	}
 
 	if tl.V("grow") != nil {
-		tl.Printf("grow   % 4x n %d : %x -> %x  p %x", f.FileNext, n, f.FileNext, next, p)
+		tl.Printf("grow   % 4x n %d : %x -> %x  p %x", f.next, n, f.next, next, p)
 	}
 
-	off = f.FileNext
-	f.FileNext = next
+	off = f.next
+	f.next = next
 
 	for b, n := align(off, p, sz); b != 0; b, n = align(off, p, sz) {
 		if tl.V("grow") != nil {
@@ -176,10 +226,11 @@ func (f *Freelist2) allocGrow(n int) (off int64, err error) {
 func (f *Freelist2) Free(off, ver int64, n int) (err error) {
 	var sz uint
 	if tl.V("free") != nil {
-		tl.Printf("freei: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]  from %#v %#v", n, off, ver, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi,
-			tl.VArg("where", tlog.StackTrace(1, 4)), tl.VArg("where2", tlog.StackTrace(5, 4)))
+		tl.Printf("freei: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]  from %#v %#v", n, off, ver, f.Ver, f.Keep, f.next, f.deferred, f.defi,
+			tl.VArg("where,where2", tlog.StackTrace(1, 4)), tl.VArg("where2", tlog.StackTrace(5, 4)))
+
 		defer func() {
-			tl.Printf("freeo: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]", 1<<sz, off, ver, f.Ver, f.Keep, f.FileNext, f.deferred, f.defi)
+			tl.Printf("freeo: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]", 1<<sz, off, ver, f.Ver, f.Keep, f.next, f.deferred, f.defi)
 		}()
 	}
 
@@ -223,7 +274,7 @@ more:
 		goto more
 	}
 
-	if vbytes, _ := f.t.Get(buf[:8]); vbytes != nil {
+	if vbytes, _ := f.t.Get(buf[:8], nil); vbytes != nil {
 		v := int64(binary.BigEndian.Uint64(vbytes))
 		if tl.V("merge,sibling") != nil {
 			tl.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
@@ -252,7 +303,7 @@ fin:
 
 func (f *Freelist2) unlock() (err error) {
 	if tl.V("unlock") != nil {
-		tl.Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.FileNext, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2)))
+		tl.Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.next, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2)))
 	}
 
 	if f.lock {
@@ -275,10 +326,10 @@ more:
 
 		binary.BigEndian.PutUint64(buf[:8], uint64(kv.k))
 		if kv.v == flDelete {
-			err = f.t.Del(buf[:8])
+			err = f.t.Del(buf[:8], nil)
 		} else {
 			binary.BigEndian.PutUint64(buf[8:], uint64(kv.v))
-			err = f.t.Put(0, buf[:8], buf[8:])
+			err = f.t.Put(0, buf[:8], buf[8:], nil)
 		}
 		if err != nil {
 			return
@@ -298,6 +349,8 @@ more:
 	f.defi = -1
 	f.lock = false
 
+	err = f.flush()
+
 	return
 }
 
@@ -310,7 +363,7 @@ func (f *Freelist2) shrinkFile() (err error) {
 		f.shrinklock = false
 	}()
 
-	fnext := f.FileNext
+	fnext := f.next
 
 	if tl.V("shrink") != nil {
 		tl.Printf("try to shrink file ver/keep %x/%x fnext %x", f.Ver, f.Keep, fnext)
@@ -341,7 +394,7 @@ func (f *Freelist2) shrinkFile() (err error) {
 			break
 		}
 
-		err = f.t.Del(last)
+		err = f.t.Del(last, nil)
 		if err != nil {
 			return
 		}
@@ -349,7 +402,7 @@ func (f *Freelist2) shrinkFile() (err error) {
 		fnext = bst &^ f.Mask
 	}
 
-	if fnext == f.FileNext {
+	if fnext == f.next {
 		tl.V("shrink").Printf("none was shrinked")
 		return
 	}
@@ -380,10 +433,10 @@ func (f *Freelist2) shrinkFile() (err error) {
 	}
 
 	if tl.V("shrink,shrink_yes") != nil {
-		tl.Printf("file shrunk %x <- %x", fnext, f.FileNext)
+		tl.Printf("file shrunk %x <- %x", fnext, f.next)
 	}
 
-	f.FileNext = fnext
+	f.next = fnext
 
 	return
 }
@@ -427,25 +480,25 @@ func align(off, p int64, s uint) (b int64, n int) {
 	return p >> (s - bs), 1 << bs
 }
 
-func NewEverGrowFreelist(c *Common) *GrowFreelist {
-	flen := c.Back.Size()
+func NewEverGrowFreelist(m *Meta) *GrowFreelist {
+	flen := m.Back.Size()
 
 	f := &GrowFreelist{
-		Common: c,
-		flen:   flen,
+		Meta: m,
+		flen: flen,
 	}
 
 	return f
 }
 
 func (f *GrowFreelist) Alloc(n int) (off int64, err error) {
-	off = f.FileNext
+	off = f.next
 	size := int64(n) * f.Page
 	f.flen, err = growFile(f.Back, f.Page, off+size)
 	if err != nil {
 		return NilPage, err
 	}
-	f.FileNext += size
+	f.next += size
 
 	return off, nil
 }

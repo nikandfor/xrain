@@ -4,76 +4,82 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/nikandfor/tlog"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestTxBucket(t *testing.T) {
+	initLogger(t)
+
 	const Page = 0x100
 
 	b := NewMemBack(0)
 
-	db, err := NewDB(b, Page, nil)
+	l := NewFixedLayout(nil)
+	l.SetKVSize(1, 7, 8, 1)
+
+	db, err := NewDB(b, Page, l)
 	if !assert.NoError(t, err) {
 		return
 	}
 
 	err = db.Update(func(tx *Tx) error {
-		b := tx.Bucket([]byte("bucket00"))
+		b := tx.Bucket([]byte("bucket0"))
 		assert.Nil(t, b)
 
-		b0, err := tx.PutBucket([]byte("bucket00"))
+		b0, err := tx.PutBucket([]byte("bucket0"))
 		assert.NoError(t, err)
 		assert.NotNil(t, b0)
 
-		err = b0.Put([]byte("key_aaaa"), []byte("value_00"))
+		err = b0.Put([]byte("key_aaa"), []byte("value_00"))
 		assert.NoError(t, err)
 
-		b1, err := tx.PutBucket([]byte("bucket01"))
+		b1, err := tx.PutBucket([]byte("bucket1"))
 		assert.NoError(t, err)
 		assert.NotNil(t, b1)
 
-		err = b1.Put([]byte("key_aaaa"), []byte("value_01"))
+		err = b1.Put([]byte("key_aaa"), []byte("value_01"))
 		assert.NoError(t, err)
 
 		return nil
 	})
 	assert.NoError(t, err)
 
-	tlog.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.c.Ver, db.c.Keep, db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
+	tl.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
 
 	err = db.Update(func(tx *Tx) error {
-		b0 := tx.Bucket([]byte("bucket00"))
+		b0 := tx.Bucket([]byte("bucket0"))
 		assert.NotNil(t, b0)
 
-		assert.Equal(t, []byte("value_00"), b0.Get([]byte("key_aaaa")))
-		err = b0.Put([]byte("key_aaaa"), []byte("value_10"))
+		assert.Equal(t, []byte("value_00"), b0.Get([]byte("key_aaa")))
+		err = b0.Put([]byte("key_aaa"), []byte("value_10"))
 		assert.NoError(t, err)
 
-		b1 := tx.Bucket([]byte("bucket01"))
+		b1 := tx.Bucket([]byte("bucket1"))
 		assert.NotNil(t, b1)
 
-		assert.Equal(t, []byte("value_01"), b1.Get([]byte("key_aaaa")))
-		err = b1.Put([]byte("key_aaaa"), []byte("value_11"))
+		assert.Equal(t, []byte("value_01"), b1.Get([]byte("key_aaa")))
+		err = b1.Put([]byte("key_aaa"), []byte("value_11"))
 		assert.NoError(t, err)
 
 		return nil
 	})
 	assert.NoError(t, err)
 
+	tl.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
+
 	err = db.Update(func(tx *Tx) error {
-		b0 := tx.Bucket([]byte("bucket00"))
+		b0 := tx.Bucket([]byte("bucket0"))
 		assert.NotNil(t, b0)
 
-		assert.Equal(t, []byte("value_10"), b0.Get([]byte("key_aaaa")))
-		err = tx.DelBucket([]byte("bucket00"))
+		assert.Equal(t, []byte("value_10"), b0.Get([]byte("key_aaa")))
+		err = tx.DelBucket([]byte("bucket0"))
 		assert.NoError(t, err)
 
-		b1 := tx.Bucket([]byte("bucket01"))
+		b1 := tx.Bucket([]byte("bucket1"))
 		assert.NotNil(t, b1)
 
-		assert.Equal(t, []byte("value_11"), b1.Get([]byte("key_aaaa")))
-		err = tx.DelBucket([]byte("bucket01"))
+		assert.Equal(t, []byte("value_11"), b1.Get([]byte("key_aaa")))
+		err = tx.DelBucket([]byte("bucket1"))
 		assert.NoError(t, err)
 
 		return nil
@@ -81,19 +87,23 @@ func TestTxBucket(t *testing.T) {
 	assert.NoError(t, err)
 
 	err = db.View(func(tx *Tx) error {
-		b := tx.Bucket([]byte("bucket00"))
+		b := tx.Bucket([]byte("bucket0"))
 		assert.Nil(t, b)
 
-		b = tx.Bucket([]byte("bucket01"))
+		b = tx.Bucket([]byte("bucket1"))
 		assert.Nil(t, b)
 
 		return nil
 	})
 	assert.NoError(t, err)
 
-	l, r := b.Access2(0, 0x40, Page, 0x40)
-	tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
-	b.Unlock2(l, r)
+	off0, off1 := b.Access2(0, 0x40, Page, 0x40)
+	tl.Printf("header pages 0, 1:\n%v\n%v", hex.Dump(off0), hex.Dump(off1))
+	b.Unlock2(off0, off1)
 
-	tlog.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.c.Ver, db.c.Keep, db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
+	off0, off1 = b.Access2(2*Page, 0x40, 3*Page, 0x40)
+	tl.Printf("header pages 2, 3:\n%v\n%v", hex.Dump(off0), hex.Dump(off1))
+	b.Unlock2(off0, off1)
+
+	tl.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
 }

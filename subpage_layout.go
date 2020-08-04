@@ -30,7 +30,7 @@ func (l *SubpageLayout) Bytes() []byte {
 	return l.p
 }
 
-func (l *SubpageLayout) SetCommon(*Common)     {}
+func (l *SubpageLayout) SetMeta(*Meta)         {}
 func (l *SubpageLayout) Alloc() (int64, error) { return NilPage, nil }
 func (l *SubpageLayout) Free(int64) error      { return nil }
 

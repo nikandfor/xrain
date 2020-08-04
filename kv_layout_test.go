@@ -16,16 +16,16 @@ func TestKV2InsertOne(t *testing.T) {
 
 	b := NewMemBack(0)
 
-	c := &Common{
+	m := &Meta{
 		Back: b,
 		Page: Page,
 		Mask: Page - 1,
 	}
 
-	fl := NewEverGrowFreelist(c)
-	c.Freelist = fl
+	fl := NewEverGrowFreelist(m)
+	m.Freelist = fl
 
-	l := NewKVLayout2(c)
+	l := NewKVLayout2(m)
 
 	root, err := l.Alloc()
 	require.NoError(t, err)
@@ -61,16 +61,16 @@ func TestKV2InsertSplit(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(0)
-	c := &Common{
+	m := &Meta{
 		Back: b,
 		Page: Page,
 		Mask: Page - 1,
 	}
 
-	fl := NewEverGrowFreelist(c)
-	c.Freelist = fl
+	fl := NewEverGrowFreelist(m)
+	m.Freelist = fl
 
-	l := NewKVLayout2(c)
+	l := NewKVLayout2(m)
 
 	root, err := l.Alloc()
 	require.NoError(t, err)
@@ -100,16 +100,16 @@ func TestKV2InsertBig(t *testing.T) {
 	const Page = 0x100
 
 	b := NewMemBack(0)
-	c := &Common{
+	m := &Meta{
 		Back: b,
 		Page: Page,
 		Mask: Page - 1,
 	}
 
-	fl := NewEverGrowFreelist(c)
-	c.Freelist = fl
+	fl := NewEverGrowFreelist(m)
+	m.Freelist = fl
 
-	l := NewKVLayout2(c)
+	l := NewKVLayout2(m)
 
 	root, err := l.Alloc()
 	require.NoError(t, err)
@@ -161,16 +161,16 @@ func TestKV2InsertBigKey(t *testing.T) {
 	const Page = 0x100
 
 	b := NewMemBack(0)
-	c := &Common{
+	m := &Meta{
 		Back: b,
 		Page: Page,
 		Mask: Page - 1,
 	}
 
-	fl := NewEverGrowFreelist(c)
-	c.Freelist = fl
+	fl := NewEverGrowFreelist(m)
+	m.Freelist = fl
 
-	l := NewKVLayout2(c)
+	l := NewKVLayout2(m)
 
 	root, err := l.Alloc()
 	require.NoError(t, err)

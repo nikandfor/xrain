@@ -13,16 +13,15 @@ type (
 	}
 
 	SimpleBucket struct {
-		tx    *Tx
-		name  []byte
-		par   *SimpleBucket
-		l     Layout
-		c     Common
-		t     *LayoutShortcut
-		root  int64
-		sub   map[string]*SimpleBucket
-		del   bool
-		flags FlagsSupported
+		tx      *Tx
+		name    []byte
+		par     *SimpleBucket
+		l       Layout
+		t       *LayoutShortcut
+		oldroot int64
+		sub     map[string]*SimpleBucket
+		del     bool
+		flags   FlagsSupported
 	}
 )
 
@@ -45,13 +44,13 @@ func newBucket(tx *Tx, l Layout, root int64, name []byte, par *SimpleBucket) *Si
 	ff, _ := l.(FlagsSupported)
 
 	return &SimpleBucket{
-		tx:    tx,
-		name:  name,
-		par:   par,
-		l:     l,
-		t:     NewLayoutShortcut(l, root, tx.c.Mask),
-		root:  root,
-		flags: ff,
+		tx:      tx,
+		name:    name,
+		par:     par,
+		l:       l,
+		t:       NewLayoutShortcut(l, root, tx.d.Mask),
+		oldroot: root,
+		flags:   ff,
 	}
 }
 
@@ -59,7 +58,7 @@ func (b *SimpleBucket) Put(k, v []byte) error {
 	return b.put(0, k, v)
 }
 
-func (b *SimpleBucket) put(F int, k, v []byte) error {
+func (b *SimpleBucket) put(ff int, k, v []byte) error {
 	if !b.allowed(true) {
 		panic("not allowed")
 	}
@@ -67,12 +66,12 @@ func (b *SimpleBucket) put(F int, k, v []byte) error {
 		return err
 	}
 
-	ov, oF := b.t.Get(k)
-	if ov != nil && oF != F && b.flags != nil {
+	ov, of := b.t.Get(k, nil)
+	if ov != nil && of != ff && b.flags != nil {
 		return ErrTypeMismatch
 	}
 
-	err := b.t.Put(F, k, v)
+	err := b.t.Set(ff, k, v, nil)
 	if err != nil {
 		return err
 	}
@@ -88,7 +87,7 @@ func (b *SimpleBucket) Get(k []byte) []byte {
 		return nil
 	}
 
-	v, F := b.t.Get(k)
+	v, F := b.t.Get(k, nil)
 
 	if F != 0 {
 		return nil
@@ -105,12 +104,12 @@ func (b *SimpleBucket) Del(k []byte) error {
 		return nil
 	}
 
-	_, F := b.t.Get(k)
+	_, F := b.t.Get(k, nil)
 	if F != 0 {
 		return ErrTypeMismatch
 	}
 
-	err := b.t.Del(k)
+	err := b.t.Del(k, nil)
 	if err != nil {
 		return err
 	}
@@ -171,7 +170,7 @@ func (b *SimpleBucket) PutBucket(k []byte) (*SimpleBucket, error) {
 		}
 	}
 
-	v, F := b.t.Get(k)
+	v, F := b.t.Get(k, nil)
 	if v != nil {
 		if F == 0 && b.flags != nil {
 			return nil, ErrTypeMismatch
@@ -179,6 +178,9 @@ func (b *SimpleBucket) PutBucket(k []byte) (*SimpleBucket, error) {
 	}
 
 	var buf [8]byte
+	off := int64(NilPage)
+	binary.BigEndian.PutUint64(buf[:], uint64(off))
+
 	err := b.put(1, k, buf[:])
 	if err != nil {
 		return nil, err
@@ -205,7 +207,7 @@ func (b *SimpleBucket) DelBucket(k []byte) error {
 		}
 	}
 
-	v, F := b.t.Get(k)
+	v, F := b.t.Get(k, nil)
 	if v == nil {
 		return nil
 	}
@@ -220,7 +222,7 @@ func (b *SimpleBucket) DelBucket(k []byte) error {
 		return err
 	}
 
-	err = b.t.Del(k)
+	err = b.t.Del(k, nil)
 	if err != nil {
 		return err
 	}
@@ -233,18 +235,21 @@ func (b *SimpleBucket) DelBucket(k []byte) error {
 }
 
 func (b *SimpleBucket) delBucket(root int64) error {
+	if root == NilPage {
+		return nil
+	}
+
 	if b.flags == nil {
 		return b.l.Free(root)
 	}
 
-	for st := b.l.Step(nil, b.t.Root, false); st != nil; st = b.l.Step(st, b.t.Root, false) {
+	for st := b.l.Step(nil, root, false); st != nil; st = b.l.Step(st, root, false) {
 		F := b.flags.Flags(st)
 		if F == 0 {
 			continue
 		}
 
-		v := b.l.Value(st, nil)
-		sub := int64(binary.BigEndian.Uint64(v))
+		sub := b.l.Int64(st)
 
 		err := b.delBucket(sub)
 		if err != nil {
@@ -252,7 +257,7 @@ func (b *SimpleBucket) delBucket(root int64) error {
 		}
 	}
 
-	err := b.l.Free(b.t.Root)
+	err := b.l.Free(root)
 	if err != nil {
 		return err
 	}
@@ -293,19 +298,21 @@ func inc(k []byte) {
 
 func (b *SimpleBucket) propagate() error {
 	root := b.t.Root
-	if b.par == nil || root == b.root {
-		b.root = root
+	//	tl.Printf("propogate: %x <- %x  par %v", root, b.oldroot, b.par)
+	if b.par == nil || root == b.oldroot {
+		b.oldroot = root
 		return nil
 	}
 
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(root))
+
 	err := b.par.put(1, []byte(b.name), buf[:])
 	if err != nil {
 		return err
 	}
 
-	b.root = root
+	b.oldroot = root
 
 	return nil
 }

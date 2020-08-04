@@ -12,7 +12,7 @@ import (
 
 type (
 	Layout interface {
-		SetCommon(*Common)
+		SetMeta(*Meta)
 
 		Alloc() (int64, error)
 		Free(root int64) error
@@ -36,7 +36,7 @@ type (
 	}
 
 	BaseLayout2 struct {
-		*Common
+		*Meta
 		Compare    func(a, b []byte) int
 		linkf      func(off int64, i int) int64
 		searchf    func(off int64, k, v []byte) (i, n int, coff int64, eq, isleaf bool)
@@ -161,7 +161,7 @@ func (l *BaseLayout2) realloc(off int64, oldn, n int) (noff int64, err error) {
 	return
 }
 
-func (l *BaseLayout2) SetCommon(c *Common) { l.Common = c }
+func (l *BaseLayout2) SetMeta(m *Meta) { l.Meta = m }
 
 func (l *BaseLayout2) Alloc() (int64, error) {
 	off, err := l.Freelist.Alloc(1)
@@ -265,10 +265,10 @@ fin:
 	return st
 }
 
-func NewKVLayout2(c *Common) *KVLayout2 {
+func NewKVLayout2(m *Meta) *KVLayout2 {
 	var l KVLayout2
 
-	l.Common = c
+	l.Meta = m
 	l.linkf = l.link
 	l.searchf = l.search
 	l.firstLastf = l.firstLast
@@ -278,10 +278,10 @@ func NewKVLayout2(c *Common) *KVLayout2 {
 	return &l
 }
 
-func (l *KVLayout2) SetCommon(c *Common) { l.Common = c; l.init() }
+func (l *KVLayout2) SetMeta(m *Meta) { l.Meta = m; l.init() }
 
 func (l *KVLayout2) init() {
-	if l.Common == nil {
+	if l.Meta == nil {
 		return
 	}
 
@@ -1778,11 +1778,11 @@ func (l *KVLayout2) dumpPage(off int64) string {
 
 	for i := 0; i < n; i++ {
 		st[0] = MakeOffIndex(off, i)
-		k, _ := l.Key(st, nil)
+		k, ff := l.Key(st, nil)
 
 		if isleaf {
 			v := l.Value(st, nil)
-			fmt.Fprintf(&buf, "    %-20.10x -> %-16.8x  | %-22.20q -> %-.40q\n", k, v, k, v)
+			fmt.Fprintf(&buf, "    %-20.10x -> %2x  %-12.6x  | %-22.20q -> %-.40q\n", k, ff, v, k, v)
 		} else {
 			v := l.link(st.LastOffIndex(l.Mask))
 			fmt.Fprintf(&buf, "    %-20.10x -> %16x  | %-22.20q\n", k, v, k)

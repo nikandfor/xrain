@@ -21,10 +21,10 @@ const fixedIndexStart = 0x10
 
 var _ Layout = &FixedLayout{}
 
-func NewFixedLayout(c *Common) *FixedLayout {
+func NewFixedLayout(m *Meta) *FixedLayout {
 	l := &FixedLayout{
 		BaseLayout2: BaseLayout2{
-			Common: c,
+			Meta: m,
 		},
 	}
 
@@ -122,14 +122,14 @@ func (l *FixedLayout) SetKVSize(ff, k, v, pm int) {
 	l.init()
 }
 
-func (l *FixedLayout) SetCommon(c *Common) {
-	l.Common = c
+func (l *FixedLayout) SetMeta(m *Meta) {
+	l.Meta = m
 
 	l.init()
 }
 
 func (l *FixedLayout) init() {
-	if l.Common == nil {
+	if l.Meta == nil {
 		return
 	}
 
@@ -381,6 +381,8 @@ func (l *FixedLayout) search(off int64, k, v []byte) (i, n int, coff int64, eq, 
 		return cmp(p[vst:end], v)
 	}
 
+	//	tl.Printf("search %x  len %x for %q   l %+v", off, len(p), k, l)
+
 	n = l.nkeys(p)
 	isleaf = l.isleaf(p)
 
@@ -416,6 +418,8 @@ func (l *FixedLayout) firstLast(st Stack, off int64, back bool) Stack {
 			p := l.Access(off, l.p)
 			defer l.Unlock(p)
 
+			//	tl.Printf("firstLast %3x %5v  len %x  l %+v", off, back, len(p), l)
+
 			n := l.nkeys(p)
 
 			if stop = n == 0; stop {
@@ -443,6 +447,10 @@ func (l *FixedLayout) firstLast(st Stack, off int64, back bool) Stack {
 }
 
 func (l *FixedLayout) Insert(st Stack, ff int, k, v []byte) (_ Stack, err error) {
+	if len(k) != l.k || len(v) != l.v {
+		panic("key, value or flags size mismatch")
+	}
+
 	off, i := st.LastOffIndex(l.Mask)
 
 	off0, off1, di, err := l.insert(off, i, ff, k, v)
@@ -947,11 +955,11 @@ func (l *FixedLayout) dumpPage(off int64) string {
 
 	for i := 0; i < n; i++ {
 		st[0] = MakeOffIndex(off, i)
-		k, _ := l.Key(st, nil)
+		k, ff := l.Key(st, nil)
 
 		if isleaf {
 			v := l.Value(st, nil)
-			fmt.Fprintf(&buf, "    %2x -> %2x  | %q -> %q\n", k, v, k, v)
+			fmt.Fprintf(&buf, "    %2x -> %2x  %12.6x  | %q -> %q\n", k, ff, v, k, v)
 		} else {
 			v := l.link(st.LastOffIndex(l.Mask))
 			fmt.Fprintf(&buf, "    %2x -> %16x  | %q\n", k, v, k)

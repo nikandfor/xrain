@@ -11,7 +11,7 @@ type (
 		Unlock(p []byte)
 		Unlock2(p, p2 []byte)
 
-		Copy(roff, loff, len int64)
+		//	Copy(roff, loff, len int64)
 
 		Size() int64
 		Truncate(size int64) error
@@ -37,18 +37,18 @@ func (b *MemBack) Access(off, l int64) []byte {
 		return nil
 	}
 
-	return b.d[off : off+l]
+	return b.d[off : off+l : off+l]
 }
 
 func (b *MemBack) Access2(off, l, off2, l2 int64) (p, p2 []byte) {
 	b.mu.RLock()
 
 	if off != NilPage && l != 0 {
-		p = b.d[off : off+l]
+		p = b.d[off : off+l : off+l]
 	}
 
 	if off2 != NilPage && l2 != 0 {
-		p2 = b.d[off2 : off2+l2]
+		p2 = b.d[off2 : off2+l2 : off2+l2]
 	}
 
 	return

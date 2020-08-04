@@ -15,6 +15,7 @@ import (
 
 	"github.com/nikandfor/tlog"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type (
@@ -39,62 +40,73 @@ type (
 	}
 )
 
-func init() {
-	tlog.DefaultLogger = tlog.New(tlog.NewConsoleWriter(os.Stderr, tlog.LdetFlags))
-}
-
 const (
 	TaskGet TaskType = iota != 0
 	TaskPut
 )
 
 func TestXRainSmoke(t *testing.T) {
+	initLogger(t)
+
 	const Page = 0x100
 
 	b := NewMemBack(0)
 	l := NewFixedLayout(nil)
+	l.SetKVSize(1, 7, 8, 1)
 
 	db, err := NewDB(b, Page, l)
 	assert.NoError(t, err)
 
 	err = db.Update(func(tx *Tx) error {
-		return tx.Put([]byte("key_aaaa"), []byte("value_aa"))
+		return tx.Put([]byte("key_aaa"), []byte("value_aa"))
 	})
 	assert.NoError(t, err)
 
-	if false {
-		l, r := b.Access2(0, 0x40, Page, 0x40)
-		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
-		b.Unlock2(l, r)
-		tlog.Printf("dump root %x free %x next %x\n%v", db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
+	if tl.V("dump") != nil {
+		off0, off1 := b.Access2(0, 0x40, Page, 0x40)
+		tl.Printf("header pages 0, 1:\n%v%v", hex.Dump(off0), hex.Dump(off1))
+		b.Unlock2(off0, off1)
+
+		off0, off1 = b.Access2(2*Page, 0x40, 3*Page, 0x40)
+		tl.Printf("header pages 2, 3:\n%v%v", hex.Dump(off0), hex.Dump(off1))
+		b.Unlock2(off0, off1)
+
+		tl.Printf("dump root %x free %x next %x\n%v", db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
 	}
 
 	db, err = NewDB(b, 0, l)
 	assert.NoError(t, err)
 
 	err = db.View(func(tx *Tx) error {
-		v := tx.Get([]byte("key_aaaa"))
+		v := tx.Get([]byte("key_aaa"))
 		assert.Equal(t, []byte("value_aa"), v)
 		return nil
 	})
 	assert.NoError(t, err)
 
 	err = db.Update(func(tx *Tx) error {
-		return tx.Del([]byte("key_aaaa"))
+		return tx.Del([]byte("key_aaa"))
 	})
 	assert.NoError(t, err)
 
 	err = db.View(func(tx *Tx) error {
-		v := tx.Get([]byte("key_aaaa"))
+		v := tx.Get([]byte("key_aaa"))
 		assert.Equal(t, []byte(nil), v)
 		return nil
 	})
 	assert.NoError(t, err)
 
-	off0, off1 := b.Access2(0, 0x40, Page, 0x40)
-	tlog.Printf("header pages:\n%v%v", hex.Dump(off0), hex.Dump(off1))
-	b.Unlock2(off0, off1)
-	tlog.Printf("dump root %x free %x next %x\n%v", db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
+	{
+		off0, off1 := b.Access2(0, 0x40, Page, 0x40)
+		tl.Printf("header pages 0, 1:\n%v%v", hex.Dump(off0), hex.Dump(off1))
+		b.Unlock2(off0, off1)
+
+		off0, off1 = b.Access2(2*Page, 0x40, 3*Page, 0x40)
+		tl.Printf("header pages 2, 3:\n%v%v", hex.Dump(off0), hex.Dump(off1))
+		b.Unlock2(off0, off1)
+
+		tl.Printf("dump root %x free %x next %x\n%v", db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
+	}
 }
 
 func TestXRainSmokeConcurrent(t *testing.T) {
@@ -107,7 +119,7 @@ func TestXRainSmokeConcurrent(t *testing.T) {
 	db, err := NewDB(b, Page, l)
 	assert.NoError(t, err)
 
-	tlog.Printf("dump root %x free %x next %x\n%v", db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
+	tl.Printf("dump root %x free %x next %x\n%v", db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
 
 	var wg sync.WaitGroup
 	wg.Add(2 * N)
@@ -145,12 +157,12 @@ func TestXRainSmokeConcurrent(t *testing.T) {
 
 	if t.Failed() {
 		l, r := b.Access2(0, 0x40, Page, 0x40)
-		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+		tl.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 		b.Unlock2(l, r)
 		l, r = b.Access2(2*Page, 0x40, 3*Page, 0x40)
-		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+		tl.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 		b.Unlock2(l, r)
-		tlog.Printf("dump root %x free %x next %x\n%v", db.root, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
+		tl.Printf("dump root %x free %x next %x\n%v", db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
 
 		t.Logf("back base addr %p", &b.d[0])
 	}
@@ -158,7 +170,7 @@ func TestXRainSmokeConcurrent(t *testing.T) {
 
 func TestXRainHeavy(t *testing.T) {
 	const (
-		Page  = 0x100
+		Page  = 0x1000
 		Iters = 100
 	)
 
@@ -185,12 +197,42 @@ func TestXRainHeavy(t *testing.T) {
 		t.Logf("back base addr %p", &b.d[0])
 
 		l, r := b.Access2(0, 0x40, Page, 0x40)
-		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+		tl.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 		b.Unlock2(l, r)
 		l, r = b.Access2(2*Page, 0x40, 3*Page, 0x40)
-		tlog.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
+		tl.Printf("header pages:\n%v%v", hex.Dump(l), hex.Dump(r))
 		b.Unlock2(l, r)
-		tlog.Printf("dump ver %d root %x (%d) free %x next %x\n%v", db.c.Ver, db.root, 0, db.c.Freelist.(*Freelist2).t.Root, db.c.FileNext, db.l.(fileDumper).dumpFile())
+		tl.Printf("dump ver %d root %x (%d) free %x next %x\n%v", db.Ver, db.root, 0, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
+	}
+}
+
+func BenchmarkXRian(b *testing.B) {
+	b.ReportAllocs()
+
+	initLogger(b)
+
+	bk := NewMemBack(0)
+
+	l := NewFixedLayout(nil)
+	l.SetKVSize(1, 7, 8, 1)
+
+	db, err := NewDB(bk, 0, l)
+	require.NoError(b, err)
+
+	for i := 0; i < b.N; i++ {
+		err = db.Update(func(tx *Tx) error {
+			b, err := tx.PutBucket([]byte("bucket0"))
+			if err != nil {
+				return err
+			}
+
+			return b.Put([]byte("key_aaa"), []byte("value_00"))
+		})
+
+		if err != nil {
+			b.Errorf("update: %v", err)
+			break
+		}
 	}
 }
 
@@ -333,13 +375,11 @@ func (t *HeavyTester) worker(c, r chan HeavyTask) {
 
 var (
 	flagv  = flag.String("tlog-v", "", "verbocity topics")
-	stderr = flag.Bool("tlog-stderr", false, "log to stderr, not in testing.T")
+	stderr = flag.Bool("tlog-to-stderr", false, "log to stderr, not in testing.T")
 
 //	det = flag.Bool("detailed", false, "detailed logs")
 //	no  = flag.Bool("no-logs", false, "hide logs")
 )
-
-var tl *tlog.Logger
 
 func TestMain(m *testing.M) {
 	flag.Parse()

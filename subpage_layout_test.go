@@ -146,5 +146,5 @@ func TestSubpageLayout(t *testing.T) {
 
 	l.Alloc()
 	l.Free(NilPage)
-	l.SetCommon(nil)
+	l.SetMeta(nil)
 }
