@@ -76,7 +76,7 @@ func (l *SubpageLayout) Search(k, v []byte) (i int, eq bool) {
 
 	n := l.nkeys()
 
-	keycmp := func(i int) (c int) {
+	keycmp := func(i int, cmpval bool) (c int) {
 		st := l.dataoff(i, n)
 		kl := int(l.p[st])
 		st++
@@ -86,7 +86,7 @@ func (l *SubpageLayout) Search(k, v []byte) (i int, eq bool) {
 		//	tl.Printf("cmp %2d  %q ? %q   dst %2x  kl %d", i, ik, k, st, kl)
 
 		c = bytes.Compare(ik, k)
-		if c != 0 {
+		if !cmpval || c != 0 {
 			return
 		}
 
@@ -99,10 +99,10 @@ func (l *SubpageLayout) Search(k, v []byte) (i int, eq bool) {
 	}
 
 	i = sort.Search(n, func(i int) bool {
-		return keycmp(i) >= 0
+		return keycmp(i, true) >= 0
 	})
 
-	eq = i < n && keycmp(i) == 0
+	eq = i < n && keycmp(i, false) == 0
 
 	return
 }

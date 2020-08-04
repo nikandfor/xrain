@@ -45,6 +45,7 @@ type (
 
 	KVLayout2 struct {
 		BaseLayout2
+		maxrow int
 	}
 
 	Stack []OffIndex
@@ -63,7 +64,7 @@ type (
 const NilPage = -1
 
 const kvIndexStart = 0x10
-const kvMaxBranckKeylen = 100
+const kvMaxBranckKeylen = 0x50
 
 var _ Layout = &KVLayout2{}
 
@@ -198,8 +199,8 @@ func (l *BaseLayout2) Seek(st Stack, root int64, k, v []byte) (_ Stack, eq bool)
 		i, n, coff, eq, isleaf = l.searchf(off, k, v)
 
 		if tl.V("seek") != nil {
-			tl.If(isleaf).Printf("seek root %3x  off %3x -> i %2d / %2d  eq %5v  - leaf", root, off, i, n, eq)
-			tl.If(!isleaf).Printf("seek root %3x  off %3x -> %3x  i %2d / %2d  - branch", root, off, coff, i, n)
+			tl.If(isleaf).Printf("seek root %3x  off %3x ->      i %2d / %2d  eq %5v  - leaf", root, off, i, n, eq)
+			tl.If(!isleaf).Printf("seek root %3x  off %3x -> %3x  i %2d / %2d            - branch", root, off, coff, i, n)
 		}
 
 		if !isleaf && i == n {
@@ -212,7 +213,7 @@ func (l *BaseLayout2) Seek(st Stack, root int64, k, v []byte) (_ Stack, eq bool)
 	}
 
 	if tl.V("seek,seek_res") != nil {
-		tl.Printf("seek root %3x -> %v  eq %5v by %q [% 2x]", root, st, eq, k, k)
+		tl.Printf("seek root %3x -> %v  eq %5v by %.20q [% 2.20x]", root, st, eq, k, k)
 	}
 
 	return st, eq
@@ -272,7 +273,22 @@ func NewKVLayout2(c *Common) *KVLayout2 {
 	l.searchf = l.search
 	l.firstLastf = l.firstLast
 
+	l.init()
+
 	return &l
+}
+
+func (l *KVLayout2) SetCommon(c *Common) { l.Common = c; l.init() }
+
+func (l *KVLayout2) init() {
+	if l.Common == nil {
+		return
+	}
+
+	l.maxrow = kvMaxBranckKeylen
+	if m := int(l.Page / 4); l.maxrow > m {
+		l.maxrow = m
+	}
 }
 
 func (l *KVLayout2) setdataoff(p []byte, i, off int) {
@@ -333,8 +349,8 @@ func (l *KVLayout2) expectedsize(p []byte, isleaf bool, i, n, ff int, k, v []byt
 	}
 
 	kl := len(k)
-	if kl > kvMaxBranckKeylen {
-		kl = kvMaxBranckKeylen
+	if kl > l.maxrow {
+		kl = l.maxrow
 	}
 	// link + keylen + key + value
 	return 2 + 1 + kl + len(v)
@@ -345,12 +361,18 @@ func (l *KVLayout2) pagelink(p []byte, i int) (off int64) {
 	st := l.dataoff(p, i)
 	end := l.dataend(p, i)
 
+	var kl int
 	if isleaf {
 		st++ // flags
-	}
 
-	kl := int(p[st])
-	st += 1 + kl
+		var ll int
+		kl, ll = decodevarlen(p[st:])
+		st += ll + kl
+	} else {
+		kl = int(p[st])
+		kl &^= 0x80
+		st += 1 + kl
+	}
 
 	sz := end - st
 	var buf [8]byte
@@ -467,31 +489,39 @@ again:
 func (l *KVLayout2) Key(st Stack, buf []byte) (key []byte, ff int) {
 	off, i := st.LastOffIndex(l.Mask)
 
-	pg := l.Page
+	ps := 1
 
 again:
 	remount := false
 
 	func() {
-		p := l.Access(off, pg)
+		p := l.Access(off, int64(ps)*l.Page)
 		defer l.Unlock(p)
 
-		pg = l.Page * int64(1+l.overflow(p))
+		ps = 1 + l.overflow(p)
 
 		dst := l.dataoff(p, i)
 
-		if dst+2 > len(p) {
+		if dst+10 > len(p) && ps*int(l.Page) != len(p) { // do not remount if we already are and key+value is really short
 			remount = true
 			return
 		}
 
+		var kl int
 		if l.isleaf(p) {
 			ff = int(p[dst])
 			dst++
-		}
 
-		kl := int(p[dst])
-		dst++
+			var ll int
+			kl, ll = decodevarlen(p[dst:])
+			dst += ll
+		} else {
+			kl = int(p[dst])
+			dst++
+			if kl >= 0x80 {
+				kl = kl&^0x80 - 8
+			}
+		}
 
 		if dst+kl >= len(p) {
 			remount = true
@@ -533,12 +563,20 @@ again:
 			return
 		}
 
+		var kl int
 		if l.isleaf(p) {
 			dst++ // flags
+
+			var ll int
+			kl, ll = decodevarlen(p[dst:])
+			dst += ll
+		} else {
+			kl = int(p[dst])
+			kl &^= 0x80
+			dst++
 		}
 
-		kl := int(p[dst])
-		dst += 1 + kl
+		dst += kl
 
 		val = append(buf, p[dst:dend]...)
 	}()
@@ -673,62 +711,128 @@ func (l *KVLayout2) search(off int64, k, v []byte) (i, n int, coff int64, eq, is
 		cmp = bytes.Compare
 	}
 
-	keycmp := func(p []byte, i int, isleaf, cmpval bool) (c int) {
-		st := l.dataoff(p, i)
-		if isleaf {
-			st++
-		}
+	ps := 1
 
-		kl := int(p[st])
-		st++
+again:
+	remount := false
 
-		ik := p[st : st+kl]
+	func() {
+		p0 := l.Access(off, int64(ps)*l.Page)
+		defer func() {
+			if p0 != nil {
+				l.Unlock(p0)
+			}
+		}()
 
-		c = cmp(ik, k)
-		if !cmpval || c != 0 {
+		p := p0
+
+		if nps := 1 + l.overflow(p); nps != ps {
+			ps = nps
+			remount = true
 			return
 		}
 
-		st += kl
-		end := l.dataend(p, i)
+		hardcase := func(i, st, kl int) (c int) {
+			kl &^= 0x80
 
-		iv := p[st:end]
+			ik := p[st : st+kl-10]
 
-		return cmp(iv, v)
-	}
+			kp := k
+			if len(ik) < len(k) {
+				kp = k[:len(ik)]
+			}
 
-	pg := l.Page
+			c = cmp(ik, kp)
+			//	tl.Printf("hadcase %x  i %d  %x  c %d ik %x %.20q  k %x %.20q", off, i, st, c, len(ik), ik, len(kp), kp)
+			if c != 0 {
+				return
+			}
 
-again:
-	p := l.Access(off, pg)
+			if p0 != nil {
+				p = make([]byte, len(p0))
+				copy(p, p0)
 
-	if ps := int64(1+l.overflow(p)) * l.Page; ps != pg {
-		pg = ps
-		l.Unlock(p)
-		goto again
-	} else {
-		defer l.Unlock(p)
-	}
+				l.Unlock(p0)
 
-	n = l.nkeys(p)
-	isleaf = l.isleaf(p)
+				p0 = nil
+			}
 
-	if n == 0 {
-		return 0, 0, 0, false, isleaf
-	}
+			lps := int(p[st+kl-10])<<8 | int(p[st+kl-9])
+			link, li := OffIndex(binary.BigEndian.Uint64(p[st+kl-8:])).OffIndex(l.Mask)
 
-	i = sort.Search(n, func(i int) bool {
-		return keycmp(p, i, isleaf, true) >= 0
-	})
+			//	tl.Printf("hardcase link %x %x ps %x", link, li, lps)
 
-	if isleaf {
-		eq = i < n && keycmp(p, i, isleaf, false) == 0
-	} else {
-		if i == n {
-			i--
+			lp := l.Access(link, int64(lps)*l.Page)
+			defer l.Unlock(lp)
+
+			lst := l.dataoff(lp, li)
+			lst++ // flags
+
+			kl, ll := decodevarlen(lp[lst:])
+			lst += ll
+
+			ik = lp[lst : lst+kl]
+
+			c = cmp(ik, k)
+			//	tl.Printf("hadcas2 %x  i %d  %x  c %d ik %x %.20q  k %.20q", off, i, st, c, kl, ik, k)
+			return c
 		}
 
-		coff = l.pagelink(p, i)
+		keycmp := func(i int, cmpval bool) (c int) {
+			st := l.dataoff(p, i)
+
+			var kl int
+			if isleaf {
+				st++ // flags
+
+				var ll int
+				kl, ll = decodevarlen(p[st:])
+				st += ll
+			} else {
+				kl = int(p[st])
+				st++
+			}
+
+			if !isleaf && kl >= 0x80 {
+				return hardcase(i, st, kl)
+			}
+
+			ik := p[st : st+kl]
+
+			c = cmp(ik, k)
+			//	tl.Printf("cmp %2d <= %.20q (%x) %.20q (%x)  - cmpval %v", c, ik, kl, k, len(k), cmpval)
+			if !cmpval || c != 0 {
+				return
+			}
+
+			st += kl
+			end := l.dataend(p, i)
+
+			iv := p[st:end]
+
+			return cmp(iv, v)
+		}
+
+		n = l.nkeys(p)
+		isleaf = l.isleaf(p)
+
+		i = sort.Search(n, func(i int) bool {
+			return keycmp(i, true) >= 0
+		})
+
+		if isleaf {
+			eq = i < n && keycmp(i, false) == 0
+		} else {
+			if i == n {
+				i--
+			}
+
+			coff = l.pagelink(p, i)
+		}
+	}()
+
+	if remount {
+		goto again
 	}
 
 	return
@@ -814,8 +918,7 @@ again:
 
 		split = exp > free
 
-		//                      link + flags + keylen + key + value
-		triple = int64(kvIndexStart+2+1+varlen(len(k))+len(k)+len(v)) > 4*l.Page
+		triple = int64(kvIndexStart+exp) > 4*l.Page
 
 		if alloc || split || triple {
 			return
@@ -876,8 +979,8 @@ again:
 			}
 		}
 
-		if tl.V("insert") != nil {
-			tl.Printf("insert %d / %d split at %d  exp %3x  left %3x / %3x", i, n, m, exp, left, tot)
+		if off0 == NilPage && tl.V("insert") != nil {
+			tl.Printf("insert %2d / %2d split at %2d  exp %3x  left %3x / %3x of %3x", i, n, m, exp, left, tot, len(p))
 		}
 
 		switch {
@@ -1013,17 +1116,7 @@ again:
 func (l *KVLayout2) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 	isleaf := l.isleaf(p)
 
-	exp := 0
-	if isleaf {
-		exp = 1 + varlen(len(k)) + len(k) + len(v) // flags + keylen + key + value
-	} else {
-		kl := len(k)
-		if kl > kvMaxBranckKeylen {
-			kl = kvMaxBranckKeylen
-		}
-
-		exp = 1 + kl + len(v) // keylen + key prefix + value
-	}
+	exp := l.expectedsize(p, isleaf, i, n, ff, k, v) - 2 // -link
 
 	dend := l.dataend(p, i)
 
@@ -1031,7 +1124,7 @@ func (l *KVLayout2) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 		dst := l.dataoff(p, n-1)
 
 		if tl.V("insert") != nil {
-			tl.Printf("insert %d / %d move %x - %x on %x   %2x %.20q %.30q", i, n, dst, dend, exp, ff, k, v)
+			tl.Printf("insert %2d / %2d move  %3x - %3x on %3x    %2x %.20q %.30q", i, n, dst, dend, exp, ff, k, v)
 		}
 
 		copy(p[dst-exp:], p[dst:dend])
@@ -1045,7 +1138,7 @@ func (l *KVLayout2) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 	dst := dend - exp
 
 	if tl.V("insert") != nil {
-		tl.Printf("insert %d / %d to    %x - %x (%x)   %2x %.20q %.30q", i, n, dst, dend, exp, ff, k, v)
+		tl.Printf("insert %2d / %2d to    %3x - %3x   (%3x)   %2x %.20q %.30q", i, n, dst, dend, exp, ff, k, v)
 	}
 
 	l.setdataoff(p, i, dst)
@@ -1054,10 +1147,70 @@ func (l *KVLayout2) pageInsert(p []byte, i, n, ff int, k, v []byte) {
 		p[dst] = byte(ff)
 		dst++
 	}
-	p[dst] = byte(len(k))
-	dst++
+
+	dst += encodevarlen(p[dst:], len(k))
+
 	copy(p[dst:], k)
 	copy(p[dst+len(k):], v)
+
+	l.setnkeys(p, n+1)
+}
+
+func (l *KVLayout2) pageInsertPageLink(p []byte, i, n, cps int, k []byte, coff int64, link OffIndex) {
+	var size int
+	size = 1 + len(k) + 8
+	if link != NilPage {
+		size += 10
+	}
+
+	//	tl.Printf("dump before\n%v", hex.Dump(p))
+
+	dend := l.dataend(p, i)
+
+	if i < n {
+		dst := l.dataoff(p, n-1)
+
+		if tl.V("insert,pagelink") != nil {
+			tl.Printf("pagelk %2d / %2d move %3x - %3x on %3x  of %3x  %q -> cps %2x link %4x off %4x", i, n, dst, dend, size, len(p), k, cps, link, coff)
+		}
+
+		copy(p[dst-size:], p[dst:dend])
+
+		for j := n - 1; j >= i; j-- {
+			off := l.dataoff(p, j)
+			l.setdataoff(p, j+1, off-size)
+		}
+	}
+
+	dst := dend - size
+
+	if tl.V("insert,pagelink") != nil {
+		tl.Printf("pagelk %2d / %2d to   %3x - %3x   (%3x) of %3x  %q -> cps %2x link %4x off %4x", i, n, dst, dend, size, len(p), k, cps, link, coff)
+	}
+
+	l.setdataoff(p, i, dst)
+
+	if link == NilPage {
+		p[dst] = byte(len(k))
+		dst++
+		dst += copy(p[dst:], k)
+	} else {
+		p[dst] = byte(len(k)+10) | 0x80
+		dst++
+		dst += copy(p[dst:], k)
+
+		p[dst] = byte(cps << 8)
+		dst++
+		p[dst] = byte(cps)
+		dst++
+
+		binary.BigEndian.PutUint64(p[dst:], uint64(link))
+		dst += 8
+	}
+
+	binary.BigEndian.PutUint64(p[dst:], uint64(coff))
+
+	//	tl.Printf("dump after\n%v", hex.Dump(p))
 
 	l.setnkeys(p, n+1)
 }
@@ -1376,80 +1529,139 @@ func (l *KVLayout2) out(s Stack, off0, off1, off2 int64, di int, rebalance bool)
 	return s, nil
 }
 
-func (l *KVLayout2) updatePageLink(off int64, i int, coff int64, del bool) (off0, off1 int64, split int, err error) {
-	cps := 1
-	var k []byte
+func (l *KVLayout2) updatePageLink(off int64, i int, coff int64, del bool) (off0, off1 int64, splitm int, err error) {
+	var alloc, split bool
+	ps, cps := 1, 1
+
+	off0, off1 = off, NilPage
+
+	tl.Printf("pagelink  %3x %d  ->  %3x %v", off, i, coff, del)
 
 again:
 	remount := false
 
 	func() {
-		p, cp := l.Access2(off, l.Page, coff, int64(cps)*l.Page)
+		p, cp := l.Access2(off0, int64(ps)*l.Page, coff, int64(cps)*l.Page)
 		defer l.Unlock2(p, cp)
 
-		cps = 1 + l.overflow(cp)
+		alloc = l.pagever(p) != l.Ver
 
+		cps = 1 + l.overflow(cp)
+		cisleaf := l.isleaf(cp)
 		cn := l.nkeys(cp)
 		cst := l.dataoff(cp, cn-1)
 
-		if cst+2 > len(cp) {
-			remount = true
-			return
-		}
-
-		if l.isleaf(cp) {
-			cst++ // flags
-		}
-
-		ckl := int(cp[cst])
-		cst++
-
-		if cst+ckl > len(cp) {
-			remount = true
-			return
-		}
-
-		ck := cp[cst : cst+ckl]
-
-		if tl.V("upl") != nil {
-			tl.Printf("upl %x %d cp %x  ckey: %q", off, i, coff, ck)
-			//	tl.Printf("dump cp\n%v", hex.Dump(cp))
-		}
-
-		n := l.nkeys(p)
-		if i < n {
+		if del && !cisleaf {
 			st := l.dataoff(p, i)
-			kl := int(p[st])
-			st++
+			end := l.dataend(p, i)
+			k := p[st : end-8]
 
-			if l.pagelink(p, i) == coff && bytes.Equal(p[st:st+kl], ck) {
+			cend := l.dataend(cp, cn-1)
+
+			ck := cp[cst : cend-8]
+
+			if bytes.Equal(k, ck) && l.pagelink(p, i) == coff {
 				return
 			}
 		}
 
-		k = append([]byte{}, ck...)
+		link := OffIndex(NilPage)
+		kl := 0
+		if cisleaf {
+			if remount = cst+10 > len(cp) && cps*int(l.Page) != len(cp); remount { // do not remount if we already are and key+value is really short
+				return
+			}
+
+			cst++ // flags
+
+			var ll int
+			kl, ll = decodevarlen(cp[cst:])
+			cst += ll
+
+			if kl >= l.maxrow {
+				kl = l.maxrow - 10
+
+				link = MakeOffIndex(coff, cn-1)
+			}
+
+			if remount = cst+kl > len(cp); remount {
+				return
+			}
+		} else {
+			kl = int(cp[cst])
+			cst++
+		}
+
+		k := cp[cst : cst+kl]
+
+		n := l.nkeys(p)
+
+		exp := 1 + kl + 8
+
+		usage := 0
+		if del {
+			usage = l.pagedatasize(p, 0, i) + exp + l.pagedatasize(p, i+1, n)
+		} else {
+			usage = l.pagedatasize(p, 0, n) + exp
+		}
+
+		split = kvIndexStart+usage > int(l.Page)
+
+		if alloc || split && ps == 1 {
+			tl.Printf("exit %v %v %v", alloc, split, ps)
+			return
+		}
+
+		if tl.V("pagelink") != nil {
+			tl.Printf("pagelk %q (%x) cisleaf %5v link %x del %v  split %v", k, kl, cisleaf, link, del, split)
+			tl.Printf("coff %x cst %x of %x", coff, cst, len(cp))
+		}
+
+		if del {
+			l.pageDelete(p, i, n)
+			n--
+		}
+
+		ip := p[:l.Page]
+
+		if split {
+			m := (n + 1) / 2
+
+			l.pageSplit(p, p[:l.Page], p[l.Page:], m, n)
+
+			if i >= m {
+				ip = p[l.Page:]
+				splitm = m
+				i -= m
+				n -= m
+			} else {
+				n = m
+			}
+
+			off1 = off0 + l.Page
+
+			split = false
+		}
+
+		l.pageInsertPageLink(ip, i, n, cps, k, coff, link)
 	}()
+
+	if alloc || split {
+		if split {
+			ps = 2
+		}
+
+		off0, err = l.realloc(off0, 1, ps)
+		if err != nil {
+			return
+		}
+
+		goto again
+	}
 
 	if remount {
 		goto again
 	}
-
-	if k == nil {
-		return off, NilPage, 0, nil
-	}
-
-	if del {
-		off, _, err = l.delete(off, i)
-		if err != nil {
-			return
-		}
-	}
-
-	v := append(k, 0, 0, 0, 0, 0, 0, 0, 0)
-	v = v[len(k):]
-	binary.BigEndian.PutUint64(v, uint64(coff))
-
-	off0, off1, _, split, err = l.insert(off, i, 0, k, v)
 
 	return
 }
@@ -1568,24 +1780,12 @@ func (l *KVLayout2) dumpPage(off int64) string {
 		st[0] = MakeOffIndex(off, i)
 		k, _ := l.Key(st, nil)
 
-		sk := k
-		if len(sk) > 16 {
-			sk = sk[:16]
-		}
-
-		sks := fmt.Sprintf("%x", sk)
-
 		if isleaf {
 			v := l.Value(st, nil)
-			sv := v
-			if len(sv) > 8 {
-				sv = sv[:8]
-			}
-			svs := fmt.Sprintf("%x", sv)
-			fmt.Fprintf(&buf, "    %-20.20v -> %16v  | %-20.20q -> %-.40q\n", sks, svs, k, v)
+			fmt.Fprintf(&buf, "    %-20.10x -> %-16.8x  | %-22.20q -> %-.40q\n", k, v, k, v)
 		} else {
 			v := l.link(st.LastOffIndex(l.Mask))
-			fmt.Fprintf(&buf, "    %-20.20v -> %16x  | %-20.20q\n", sks, v, k)
+			fmt.Fprintf(&buf, "    %-20.10x -> %16x  | %-22.20q\n", k, v, k)
 		}
 	}
 
@@ -1658,5 +1858,30 @@ func varlen(x int) (n int) {
 		n++
 		x >>= 7
 	}
+	return
+}
+
+func encodevarlen(p []byte, x int) (i int) {
+	for x >= 0x80 {
+		p[i] = byte(x) | 0x80
+		x >>= 7
+		i++
+	}
+
+	p[i] = byte(x)
+
+	return i + 1
+}
+
+func decodevarlen(p []byte) (x, i int) {
+	for _, b := range p {
+		x |= int(b) &^ 0x80 << uint(i*7)
+		i++
+
+		if b < 0x80 {
+			break
+		}
+	}
+
 	return
 }

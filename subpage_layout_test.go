@@ -1,6 +1,7 @@
 package xrain
 
 import (
+	"bytes"
 	"encoding/hex"
 	"testing"
 
@@ -62,14 +63,27 @@ func TestSubpageLayout(t *testing.T) {
 
 	//
 
+	var last []byte
 	cnt := 0
 	for st := l.Step(nil, 0, false); st != nil; st = l.Step(st, 0, false) {
+		k, _ := l.Key(st, nil)
+
+		assert.True(t, bytes.Compare(last, k) <= 0, "%q before %q", last, k)
+
+		last = k
 		cnt++
 	}
 	assert.Equal(t, 4, cnt)
 
 	cnt = 0
 	for st := l.Step(nil, 0, true); st != nil; st = l.Step(st, 0, true) {
+		k, _ := l.Key(st, nil)
+
+		if cnt != 0 {
+			assert.True(t, bytes.Compare(last, k) >= 0, "%q after %q", last, k)
+		}
+
+		last = k
 		cnt++
 	}
 	assert.Equal(t, 4, cnt)
