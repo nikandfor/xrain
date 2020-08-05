@@ -62,11 +62,6 @@ func NewFreelist2(m *Meta, l Layout, root, next int64) (_ *Freelist2, err error)
 		next: next,
 	}
 
-	if m != nil {
-		f.t = NewLayoutShortcut(l, root, m.Mask)
-		f.flen = m.Back.Size()
-	}
-
 	f.init()
 
 	return f, nil
@@ -245,7 +240,7 @@ more:
 	ps := f.Page << sz
 	sib := off ^ ps
 
-	if off&(ps-1) != 0 { // TODO(nik): remove
+	if off&(ps-1) != 0 {
 		panic(off)
 	}
 

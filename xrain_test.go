@@ -5,11 +5,11 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 
@@ -219,6 +219,8 @@ func BenchmarkXRian(b *testing.B) {
 	db, err := NewDB(bk, 0, l)
 	require.NoError(b, err)
 
+	k := []byte("key_000")
+
 	for i := 0; i < b.N; i++ {
 		err = db.Update(func(tx *Tx) error {
 			b, err := tx.PutBucket([]byte("bucket0"))
@@ -226,7 +228,10 @@ func BenchmarkXRian(b *testing.B) {
 				return err
 			}
 
-			return b.Put([]byte("key_aaa"), []byte("value_00"))
+			kn := fmt.Sprintf("%03x", i)
+			copy(k[len(k)-len(kn):], kn)
+
+			return b.Put(k, []byte("value_00"))
 		})
 
 		if err != nil {
@@ -387,31 +392,6 @@ func TestMain(m *testing.M) {
 	initLogger(nil)
 
 	os.Exit(m.Run())
-}
-
-func (t testingWriter) Write(p []byte) (int, error) {
-	l := tlog.Caller(4)
-	_, file, line := l.NameFileLine()
-	file = filepath.Base(file)
-
-	pad := 0
-	if len(file) < 20 {
-		pad = 20 - len(file)
-	}
-	for line < 1000 {
-		pad++
-		line *= 10
-	}
-
-	p = append(p, "                                     "[:pad]...)
-	copy(p[pad:], p)
-	for i := range p[:pad] {
-		p[i] = ' '
-	}
-
-	testingLogDepth(t.t, string(p), 5)
-
-	return len(p), nil
 }
 
 func initLogger(t testing.TB) {

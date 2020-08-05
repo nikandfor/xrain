@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc64"
+	"io"
+	"log"
 	"sync"
+	"testing"
 
 	"github.com/nikandfor/tlog"
 )
@@ -19,7 +22,7 @@ var (
 
 	zeros [8]byte
 
-	tl *tlog.Logger = tlog.DefaultLogger // test logger
+	tl *tlog.Logger // = tlog.DefaultLogger // test logger
 )
 
 var ( // errors
@@ -89,20 +92,11 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 		l: l,
 		Meta: Meta{
 			Back: b,
-			Page: page,
-			Mask: page - 1,
-			Keep: -1,
 		},
 		keepl: make(map[int64]int),
 	}
 
 	// root = 4 * page
-
-	fll := NewFixedLayout(nil)
-	d.Freelist, err = NewFreelist2(nil, fll, 5*page, 6*page)
-	if err != nil {
-		return
-	}
 
 	d.metaLayout = NewSubpageLayout(nil)
 
@@ -117,8 +111,13 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 
 	d.Meta.Meta = NewLayoutShortcut(d.metaLayout, 0, d.Mask)
 
+	fll := NewFixedLayout(&d.Meta)
+	d.Freelist, err = NewFreelist2(&d.Meta, fll, 5*d.Page, 6*d.Page)
+	if err != nil {
+		return
+	}
+
 	l.SetMeta(&d.Meta)
-	d.Freelist.SetMeta(&d.Meta)
 
 	d.batch = NewBatcher(&d.wmu, d.sync)
 	go d.batch.Run()
@@ -298,6 +297,7 @@ func (d *DB) initEmpty() (err error) {
 	}
 
 	d.root = 4 * d.Page
+	d.Mask = d.Page - 1
 
 	err = d.b.Truncate(6 * d.Page)
 	if err != nil {
@@ -367,6 +367,8 @@ again:
 		d.okver = d.Ver
 		d.Keep = d.Ver
 
+		d.Mask = d.Page - 1
+
 		sum := crc64.Update(0, CRCTable, p[:0x10])
 		sum = crc64.Update(sum, CRCTable, zeros[:])
 		sum = crc64.Update(sum, CRCTable, p[0x18:])
@@ -375,8 +377,6 @@ again:
 			err = ErrPageChecksum
 			return
 		}
-
-		d.Mask = d.Page - 1
 
 		d.root = int64(binary.BigEndian.Uint64(p[0x28:]))
 		metalen := int64(binary.BigEndian.Uint64(p[0x30:]))
@@ -394,151 +394,20 @@ again:
 	return
 }
 
-/*
+func InitTestLogger(t testing.TB, v string, tostderr bool) *tlog.Logger {
+	var w io.Writer = log.Writer()
+	ff := tlog.LdetFlags
 
-func checkPage(l PageLayout, off int64) {
-	n := l.NKeys(off)
-	var prev []byte
-	for i := 0; i < n; i++ {
-		k, _ := l.Key(off, i, nil)
-		if bytes.Compare(prev, k) != -1 {
-			log.Fatalf("at page %x of size %d  %2x goes before %2x", off, n, prev, k)
-		}
-		prev = k
+	if t != nil && !tostderr {
+		w = newTestingWriter(t)
+		ff = 0
 	}
+
+	tl = tlog.New(tlog.NewConsoleWriter(w, ff))
+
+	if v != "" {
+		tl.SetFilter(v)
+	}
+
+	return tl
 }
-
-func checkFile(l PageLayout) {
-	var b Back
-	var page int64
-	switch l := l.(type) {
-	//	case LogLayout:
-	//		checkFile(l.PageLayout)
-	//		return
-	//	case *KVLayout:
-	//		b = l.b
-	//		page = l.page
-	case *FixedLayout:
-		b = l.b
-		page = l.p
-	default:
-		panic(fmt.Sprintf("layout type %T", l))
-	}
-
-	_ = b.Sync()
-	sz := b.Size()
-	for off := 4 * page; off < sz; off += page {
-		checkPage(l, off)
-	}
-}
-
-func dumpPage(l PageLayout, off int64) (string, int64) {
-	var b Back
-	var base *BaseLayout
-	var kvl *KVLayout
-	var fl *FixedLayout
-	var page int64
-	switch l := l.(type) {
-	case *KVLayout:
-		b = l.b
-		base = &l.BaseLayout
-		kvl = l
-		page = l.page
-	case *FixedLayout:
-		b = l.b
-		base = &l.BaseLayout
-		fl = l
-		page = l.page
-	default:
-		panic(fmt.Sprintf("layout type %T", l))
-	}
-
-	var buf bytes.Buffer
-
-	var size, n int
-
-	p := b.Access(off, page)
-	{
-		tp := 'B'
-		if base.isleaf(p) {
-			tp = 'D'
-		}
-		ver := base.getver(p)
-		over := base.overflow(p)
-		size = over + 1
-		n = base.nkeys(p)
-		fmt.Fprintf(&buf, "%4x: %c over %2d ver %3d  nkeys %4d  ", off, tp, over, ver, n)
-		if kvl != nil {
-			fmt.Fprintf(&buf, "datasize %3x free space %3x\n", kvl.pagedatasize(p, n), kvl.pagefree(p, n))
-		} else {
-			fmt.Fprintf(&buf, "datasize %3x free space %3x\n", n*16, len(p)-n*16-16)
-		}
-	}
-	b.Unlock(p)
-	if fl != nil {
-		for i := 0; i < n; i++ {
-			k, _ := l.Key(off, i, nil)
-			v := l.Int64(off, i)
-			fmt.Fprintf(&buf, "    %2x -> %4x\n", k, v)
-		}
-	} else {
-		if l.IsLeaf(off) {
-			for i := 0; i < n; i++ {
-				k, F := l.Key(off, i, nil)
-				v := l.Value(off, i, nil)
-				fmt.Fprintf(&buf, "    %q %x -> %q\n", k, F, v)
-			}
-		} else {
-			for i := 0; i < n; i++ {
-				k, _ := l.Key(off, i, nil)
-				v := l.Int64(off, i)
-				fmt.Fprintf(&buf, "    %2x | %q -> %4x | %q\n", k, k, v, v)
-			}
-		}
-	}
-
-	return buf.String(), base.page * int64(size)
-}
-
-func dumpFile(l PageLayout) string {
-	var b Back
-	var page int64
-	switch l := l.(type) {
-	case *KVLayout:
-		b = l.b
-		page = l.page
-	case *FixedLayout:
-		b = l.b
-		page = l.page
-	default:
-		panic(fmt.Sprintf("layout type %T", l))
-	}
-
-	var buf strings.Builder
-	_ = b.Sync()
-	sz := b.Size()
-	off := int64(0)
-	if sz > 0 {
-		p := b.Access(0, 0x10)
-		if bytes.HasPrefix(p, []byte("xrain")) {
-			off = 4 * page
-		}
-		b.Unlock(p)
-	}
-
-	for off < sz {
-		s, l := dumpPage(l, off)
-		buf.WriteString(s)
-		off += l
-	}
-	return buf.String()
-}
-
-func assert0(c bool, f string, args ...interface{}) {
-	if c {
-		return
-	}
-
-	panic(fmt.Sprintf(f, args...))
-}
-*/

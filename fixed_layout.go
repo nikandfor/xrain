@@ -222,6 +222,8 @@ func (l *FixedLayout) Key(st Stack, buf []byte) (k []byte, ff int) {
 		dst += l.ff
 	}
 
+	//	tl.Printf("key %4x %2x   %3x %3x / %x %x", off, i, dst, l.k, len(p), cap(p))
+
 	k = append(buf, p[dst:dst+l.k]...)
 
 	return
@@ -447,8 +449,14 @@ func (l *FixedLayout) firstLast(st Stack, off int64, back bool) Stack {
 }
 
 func (l *FixedLayout) Insert(st Stack, ff int, k, v []byte) (_ Stack, err error) {
-	if len(k) != l.k || len(v) != l.v {
-		panic("key, value or flags size mismatch")
+	{
+		ffs := 0
+		for q := ff; q > 0; q >>= 8 {
+			ffs++
+		}
+		if len(k) != l.k || len(v) != l.v {
+			panic(fmt.Sprintf("key (%x), value (%x) or flags (%x) size mismatch: %q %q %x", len(k), len(v), ffs, k, v, ff))
+		}
 	}
 
 	off, i := st.LastOffIndex(l.Mask)

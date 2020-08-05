@@ -1,9 +1,12 @@
 package xrain
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 	"unsafe"
+
+	"github.com/nikandfor/tlog"
 )
 
 type testingWriter struct {
@@ -13,6 +16,31 @@ type testingWriter struct {
 func newTestingWriter(t testing.TB) testingWriter {
 	v := reflect.ValueOf(t).Pointer()
 	return testingWriter{t: unsafe.Pointer(v)}
+}
+
+func (t testingWriter) Write(p []byte) (int, error) {
+	l := tlog.Caller(4)
+	_, file, line := l.NameFileLine()
+	file = filepath.Base(file)
+
+	pad := 0
+	if len(file) < 20 {
+		pad = 20 - len(file)
+	}
+	for line < 1000 {
+		pad++
+		line *= 10
+	}
+
+	p = append(p, "                                     "[:pad]...)
+	copy(p[pad:], p)
+	for i := range p[:pad] {
+		p[i] = ' '
+	}
+
+	testingLogDepth(t.t, string(p), 5)
+
+	return len(p), nil
 }
 
 //go:linkname testingLogDepth testing.(*common).logDepth
