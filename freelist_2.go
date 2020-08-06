@@ -24,7 +24,7 @@ type (
 
 	Freelist2 struct {
 		l Layout // off|size -> ver; size ::= log(n)
-		t *LayoutShortcut
+		t LayoutShortcut
 
 		*Meta
 
@@ -35,6 +35,13 @@ type (
 		deferred         []kv2
 		defi             int
 		lock, shrinklock bool
+
+		rootkey []byte
+		nextkey []byte
+		datakey []byte
+
+		buf, buf2     []byte
+		stbuf, stbuf2 Stack
 	}
 
 	GrowFreelist struct {
@@ -56,10 +63,15 @@ var (
 
 func NewFreelist2(m *Meta, l Layout, root, next int64) (_ *Freelist2, err error) {
 	f := &Freelist2{
-		l:    l,
-		Meta: m,
-		root: root,
-		next: next,
+		l:       l,
+		Meta:    m,
+		root:    root,
+		next:    next,
+		rootkey: []byte("freelist2.root"),
+		nextkey: []byte("freelist2.next"),
+		datakey: []byte("freelist2.data"),
+
+		buf2: make([]byte, 16),
 	}
 
 	f.init()
@@ -79,15 +91,23 @@ func (f *Freelist2) init() {
 		return
 	}
 
-	if f.Meta.Meta != nil {
-		st, eq := f.Meta.Meta.Seek([]byte("freelist.root"), nil, nil)
+	if f.Meta.Meta.Layout != nil {
+		st, eq := f.Meta.Meta.Seek(f.rootkey, nil, nil)
 		if eq {
 			f.root = f.Meta.Meta.Layout.Int64(st)
 		}
 
-		st, eq = f.Meta.Meta.Seek([]byte("freelist.next"), nil, nil)
+		st, eq = f.Meta.Meta.Seek(f.nextkey, nil, st)
 		if eq {
 			f.next = f.Meta.Meta.Layout.Int64(st)
+		}
+
+		if l, ok := f.l.(*SubpageLayout); ok {
+			st, eq = f.Meta.Meta.Seek(f.datakey, nil, st)
+			data := f.Meta.Meta.Value(st, nil)
+			if eq {
+				l.SetBytes(data)
+			}
 		}
 	}
 
@@ -96,25 +116,24 @@ func (f *Freelist2) init() {
 }
 
 func (f *Freelist2) flush() (err error) {
-	if f.Meta == nil || f.Meta.Meta == nil {
+	if f.Meta == nil || f.Meta.Meta.Layout == nil {
 		return
 	}
 
-	_, err = f.Meta.Meta.SetInt64([]byte("freelist.root"), f.t.Root, nil)
+	_, f.stbuf, err = f.Meta.Meta.SetInt64(f.rootkey, f.t.Root, f.stbuf[:0])
 	if err != nil {
 		return
 	}
-	_, err = f.Meta.Meta.SetInt64([]byte("freelist.next"), f.next, nil)
+	_, f.stbuf, err = f.Meta.Meta.SetInt64(f.nextkey, f.next, f.stbuf[:0])
 	if err != nil {
 		return
 	}
 
 	if l, ok := f.l.(*SubpageLayout); ok {
-		err = f.Meta.Meta.Set(0, []byte("freelist.data"), l.Bytes(), nil)
+		f.stbuf, err = f.Meta.Meta.Set(0, f.datakey, l.Bytes(), f.stbuf[:0])
 		if err != nil {
 			return
 		}
-		_, err = f.Meta.Meta.SetInt64([]byte("freelist.next"), f.next, nil)
 	}
 
 	return
@@ -123,7 +142,7 @@ func (f *Freelist2) flush() (err error) {
 func (f *Freelist2) Alloc(n int) (off int64, err error) {
 	if tl.V("alloc") != nil {
 		tl.Printf("alloc: %2x   ??   ??  ver %x/%x next %x  def %x[%d:] from %#v %#v", n, f.Ver, f.Keep, f.next, f.deferred, f.defi,
-			tl.VArg("where,where2", tlog.StackTrace(1, 4)), tl.VArg("where2", tlog.StackTrace(5, 4)))
+			tl.VArg("where,where2", tlog.StackTrace(1, 4), ""), tl.VArg("where2", tlog.StackTrace(5, 4), ""))
 
 		defer func() {
 			tl.Printf("alloc: %2x %4x   ??  ver %x/%x next %x  def %x[%d:]", n, off, f.Ver, f.Keep, f.next, f.deferred, f.defi)
@@ -133,15 +152,15 @@ func (f *Freelist2) Alloc(n int) (off int64, err error) {
 	nsize := nsize(n)
 	// don't return blocks from f.deferred: they are still may be used by freelist tree
 
-	var st Stack
+	var st Stack = f.stbuf2[:0]
 next:
 	st = f.t.Next(st)
 	if st == nil {
 		return f.allocGrow(n)
 	}
-	last, _ := f.l.Key(st, nil)
+	f.buf2, _ = f.l.Key(st, f.buf2[:0])
 
-	off = int64(binary.BigEndian.Uint64(last))
+	off = int64(binary.BigEndian.Uint64(f.buf2))
 
 	size := uint(off & f.Mask)
 	if size < nsize {
@@ -154,11 +173,12 @@ next:
 		}
 	}
 
-	vbytes := f.l.Value(st, nil)
-	ver := int64(binary.BigEndian.Uint64(vbytes))
+	ver := f.l.Int64(st)
 	if ver >= f.Keep && ver != f.Ver {
 		goto next
 	}
+
+	f.stbuf2 = st
 
 	f.deferOp(off, flDelete)
 
@@ -222,7 +242,7 @@ func (f *Freelist2) Free(off, ver int64, n int) (err error) {
 	var sz uint
 	if tl.V("free") != nil {
 		tl.Printf("freei: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]  from %#v %#v", n, off, ver, f.Ver, f.Keep, f.next, f.deferred, f.defi,
-			tl.VArg("where,where2", tlog.StackTrace(1, 4)), tl.VArg("where2", tlog.StackTrace(5, 4)))
+			tl.VArg("where,where2", tlog.StackTrace(1, 4), ""), tl.VArg("where2", tlog.StackTrace(5, 4), ""))
 
 		defer func() {
 			tl.Printf("freeo: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]", 1<<sz, off, ver, f.Ver, f.Keep, f.next, f.deferred, f.defi)
@@ -233,7 +253,8 @@ func (f *Freelist2) Free(off, ver int64, n int) (err error) {
 		ver = -2
 	}
 
-	var buf [8]byte
+	buf := f.buf2
+	var eq bool
 
 	sz = nsize(n)
 more:
@@ -243,8 +264,6 @@ more:
 	if off&(ps-1) != 0 {
 		panic(off)
 	}
-
-	binary.BigEndian.PutUint64(buf[:8], uint64(sib|int64(sz)))
 
 	for i := len(f.deferred) - 1; i >= 0; i-- {
 		kv := f.deferred[i]
@@ -256,23 +275,26 @@ more:
 		}
 
 		if tl.V("merge,sibling") != nil {
-			tl.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
+			tl.Printf("free   %4x n %2x sib %4x %4x  def %x", off, n, sib|int64(sz), kv.v, f.deferred)
 		}
 		f.deferOp(sib|int64(sz), flDelete)
 
 		sz++
 		off &= sib
-		if kv.v < ver {
+		if kv.v > ver {
 			ver = kv.v
 		}
 
 		goto more
 	}
 
-	if vbytes, _ := f.t.Get(buf[:8], nil); vbytes != nil {
-		v := int64(binary.BigEndian.Uint64(vbytes))
+	binary.BigEndian.PutUint64(buf[:8], uint64(sib|int64(sz)))
+
+	f.stbuf2, eq = f.t.Seek(buf[:8], nil, f.stbuf2)
+	if eq {
+		v := f.t.Layout.Int64(f.stbuf2)
 		if tl.V("merge,sibling") != nil {
-			tl.Printf("free   %x n %d sib %x  def %x", off, n, sib|int64(sz), f.deferred)
+			tl.Printf("free   %4x n %2x sib %4x %4x  def %x", off, n, sib|int64(sz), v, f.deferred)
 		}
 		f.deferOp(sib|int64(sz), flDelete)
 
@@ -298,7 +320,7 @@ fin:
 
 func (f *Freelist2) unlock() (err error) {
 	if tl.V("unlock") != nil {
-		tl.Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.next, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2)))
+		tl.Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.next, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2), ""))
 	}
 
 	if f.lock {
@@ -306,8 +328,13 @@ func (f *Freelist2) unlock() (err error) {
 	}
 	f.lock = true
 
-	var buf [16]byte
+	if len(f.buf) < 16 {
+		f.buf = make([]byte, 16)
+	}
+	buf := f.buf
 	i := 0
+
+	q := cap(f.stbuf)
 
 more:
 	for ; i < len(f.deferred); i++ { // for range is not applicable here
@@ -321,10 +348,14 @@ more:
 
 		binary.BigEndian.PutUint64(buf[:8], uint64(kv.k))
 		if kv.v == flDelete {
-			err = f.t.Del(buf[:8], nil)
+			f.stbuf, err = f.t.Del(buf[:8], f.stbuf)
 		} else {
 			binary.BigEndian.PutUint64(buf[8:], uint64(kv.v))
-			err = f.t.Put(0, buf[:8], buf[8:], nil)
+			f.stbuf, err = f.t.Put(0, buf[:8], buf[8:16], f.stbuf)
+		}
+
+		if cap(f.stbuf) == 0 {
+			tl.Printf("stbuf %x <- %x   %x[%d]", cap(f.stbuf), q, f.deferred, i)
 		}
 		if err != nil {
 			return
@@ -351,6 +382,7 @@ more:
 
 func (f *Freelist2) shrinkFile() (err error) {
 	if f.shrinklock {
+		tlog.Fatalf("here: %#v", tlog.StackTrace(1, 8))
 		return nil
 	}
 	f.shrinklock = true
@@ -366,11 +398,11 @@ func (f *Freelist2) shrinkFile() (err error) {
 	//	tl.V("shrink_dump").Printf("\n%v", f.l.(fileDumper).dumpFile())
 
 	for {
-		st := f.t.Prev(nil)
+		st := f.t.Last(f.stbuf)
 		if st == nil {
 			break
 		}
-		last, _ := f.l.Key(st, nil)
+		last, _ := f.l.Key(st, f.buf[:0])
 
 		bst := int64(binary.BigEndian.Uint64(last))
 		bend := bst&^f.Mask + f.Page<<uint(bst&f.Mask)
@@ -383,13 +415,12 @@ func (f *Freelist2) shrinkFile() (err error) {
 			break
 		}
 
-		vbytes := f.l.Value(st, nil)
-		ver := int64(binary.BigEndian.Uint64(vbytes))
+		ver := f.l.Int64(st)
 		if ver >= f.Keep && ver != f.Ver {
 			break
 		}
 
-		err = f.t.Del(last, nil)
+		_, err = f.t.Delete(st)
 		if err != nil {
 			return
 		}

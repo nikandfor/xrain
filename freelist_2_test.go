@@ -66,7 +66,7 @@ func TestFreelist2Align(t *testing.T) {
 	assert.Equal(t, 2, bs)
 }
 
-func TestFreelist2AllowGrow1(t *testing.T) {
+func TestFreelist2AllocGrow1(t *testing.T) {
 	initLogger(t)
 
 	const Page = 0x40
@@ -94,7 +94,7 @@ func TestFreelist2AllowGrow1(t *testing.T) {
 	//	tlog.Printf("dump:\n%v", dumpFile(pl))
 }
 
-func TestFreelist2AllowGrow2(t *testing.T) {
+func TestFreelist2AllocGrow2(t *testing.T) {
 	const Page = 0x40
 
 	b := NewMemBack(1 * Page)
@@ -456,7 +456,7 @@ func TestFreelist2Auto(t *testing.T) {
 	check(true)
 }
 
-func TestFreelistShrinkFile(t *testing.T) {
+func TestFreelist2ShrinkFile(t *testing.T) {
 	initLogger(t)
 
 	const Page = 0x100
