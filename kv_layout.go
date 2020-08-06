@@ -35,7 +35,7 @@ type (
 		Flags(Stack) int
 	}
 
-	BaseLayout2 struct {
+	BaseLayout2 struct { // crc32 uint32, isbranch bit, size uint15, overflow uint32, ver int47
 		*Meta
 		Compare    func(a, b []byte) int
 		linkf      func(off int64, i int) int64
@@ -43,7 +43,7 @@ type (
 		firstLastf func(st Stack, off int64, back bool) Stack
 	}
 
-	KVLayout2 struct {
+	KVLayout2 struct { // base [16]byte, offsets [size]int16, data []{...}
 		BaseLayout2
 		maxrow int
 	}
@@ -60,6 +60,21 @@ type (
 		dumpPage(off int64) string
 	}
 )
+
+/*
+	Key Value Pair
+
+	Total len of the struct must not exceed ((page_size - header_size) / 0x10) bytes.
+
+	// index
+	offset int16
+
+	// data
+	flags  byte
+	keylen byte // could be prefix
+	key    []byte
+	value  []byte
+*/
 
 const NilPage = -1
 
@@ -98,21 +113,23 @@ func (l *BaseLayout2) setnkeys(p []byte, n int) {
 }
 
 func (l *BaseLayout2) overflow(p []byte) int {
-	return (int(p[6])<<8 | int(p[7]))
+	return int(p[6])<<24 | int(p[7])<<16 | int(p[8])<<8 | int(p[9])
 }
 
 func (l *BaseLayout2) setoverflow(p []byte, n int) {
-	p[6] = byte(n >> 8)
-	p[7] = byte(n)
+	p[6] = byte(n >> 24)
+	p[7] = byte(n >> 16)
+	p[8] = byte(n >> 8)
+	p[9] = byte(n)
 }
 
-func (l *BaseLayout2) pagever(p []byte) int64 {
-	return int64(p[8])<<56 | int64(p[9])<<48 | int64(p[10])<<40 | int64(p[11])<<32 | int64(p[12])<<24 | int64(p[13])<<16 | int64(p[14])<<8 | int64(p[15])
+func (l *BaseLayout2) pagever(p []byte) (ver int64) {
+	ver = int64(p[10])<<40 | int64(p[11])<<32 | int64(p[12])<<24 | int64(p[13])<<16 | int64(p[14])<<8 | int64(p[15])
+	ver = ver << 16 >> 16
+	return
 }
 
 func (l *BaseLayout2) setver(p []byte, v int64) {
-	p[8] = byte(v >> 56)
-	p[9] = byte(v >> 48)
 	p[10] = byte(v >> 40)
 	p[11] = byte(v >> 32)
 	p[12] = byte(v >> 24)

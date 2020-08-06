@@ -11,7 +11,7 @@ import (
 )
 
 type (
-	FixedLayout struct {
+	FixedLayout struct { // base [16]byte, keyval []{ff,key,value}
 		BaseLayout2
 		ff, k, v, kv, fkv, pm int
 		p                     int64
