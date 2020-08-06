@@ -13,8 +13,8 @@ type (
 	}
 )
 
-func NewLayoutShortcut(l Layout, root, mask int64) *LayoutShortcut {
-	t := &LayoutShortcut{
+func NewLayoutShortcut(l Layout, root, mask int64) LayoutShortcut {
+	t := LayoutShortcut{
 		Layout: l,
 		Root:   root,
 		Mask:   mask,
@@ -24,8 +24,10 @@ func NewLayoutShortcut(l Layout, root, mask int64) *LayoutShortcut {
 }
 
 func (t *LayoutShortcut) Fill(prefill []FlagKeyValue) (err error) {
+	var st Stack
+
 	for _, p := range prefill {
-		err = t.Put(p.F, p.Key, p.Value, nil)
+		st, err = t.Put(p.F, p.Key, p.Value, st)
 		if err != nil {
 			return
 		}
@@ -49,7 +51,7 @@ func (t *LayoutShortcut) Get(k []byte, st Stack) (v []byte, ff int) {
 	return
 }
 
-func (t *LayoutShortcut) Put(ff int, k, v []byte, st Stack) (err error) {
+func (t *LayoutShortcut) Put(ff int, k, v []byte, st Stack) (_ Stack, err error) {
 	if t.Root == NilPage {
 		t.Root, err = t.Alloc()
 		if err != nil {
@@ -70,10 +72,10 @@ func (t *LayoutShortcut) Put(ff int, k, v []byte, st Stack) (err error) {
 
 	t.setRoot(st)
 
-	return err
+	return st, nil
 }
 
-func (t *LayoutShortcut) Set(ff int, k, v []byte, st Stack) (err error) {
+func (t *LayoutShortcut) Set(ff int, k, v []byte, st Stack) (_ Stack, err error) {
 	if t.Root == NilPage {
 		t.Root, err = t.Alloc()
 		if err != nil {
@@ -101,13 +103,13 @@ func (t *LayoutShortcut) Set(ff int, k, v []byte, st Stack) (err error) {
 
 	t.setRoot(st)
 
-	return err
+	return st, nil
 }
 
-func (t *LayoutShortcut) Del(k []byte, st Stack) (err error) {
+func (t *LayoutShortcut) Del(k []byte, st Stack) (_ Stack, err error) {
 	st, eq := t.Seek(k, nil, st)
 	if !eq {
-		return nil
+		return st, nil
 	}
 
 	if tl.V("tree,del") != nil {
@@ -115,10 +117,13 @@ func (t *LayoutShortcut) Del(k []byte, st Stack) (err error) {
 	}
 
 	st, err = t.Layout.Delete(st)
+	if err != nil {
+		return
+	}
 
 	t.setRoot(st)
 
-	return err
+	return st, nil
 }
 
 func (t *LayoutShortcut) Int64(k []byte, s Stack) int64 {
@@ -130,7 +135,7 @@ func (t *LayoutShortcut) Int64(k []byte, s Stack) int64 {
 	return t.Layout.Int64(s)
 }
 
-func (t *LayoutShortcut) SetInt64(k []byte, v int64, s Stack) (_ int64, err error) {
+func (t *LayoutShortcut) SetInt64(k []byte, v int64, s Stack) (off int64, _ Stack, err error) {
 	s, eq := t.Seek(k, nil, s)
 	if !eq {
 		s, err = t.Insert(s, 0, k, []byte{0, 0, 0, 0, 0, 0, 0, 0})
@@ -141,10 +146,12 @@ func (t *LayoutShortcut) SetInt64(k []byte, v int64, s Stack) (_ int64, err erro
 		t.setRoot(s)
 	}
 
-	return t.Layout.SetInt64(s, v)
+	off, err = t.Layout.SetInt64(s, v)
+
+	return off, s, err
 }
 
-func (t *LayoutShortcut) AddInt64(k []byte, v int64, s Stack) (_ int64, err error) {
+func (t *LayoutShortcut) AddInt64(k []byte, v int64, s Stack) (off int64, _ Stack, err error) {
 	s, eq := t.Seek(k, nil, s)
 	if !eq {
 		s, err = t.Insert(s, 0, k, []byte{0, 0, 0, 0, 0, 0, 0, 0})
@@ -155,7 +162,8 @@ func (t *LayoutShortcut) AddInt64(k []byte, v int64, s Stack) (_ int64, err erro
 		t.setRoot(s)
 	}
 
-	return t.Layout.AddInt64(s, v)
+	off, err = t.Layout.AddInt64(s, v)
+	return off, s, err
 }
 
 func (t *LayoutShortcut) Seek(k, v []byte, st Stack) (Stack, bool) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unsafe"
 )
 
 type (
@@ -93,6 +94,11 @@ func (l *FixedLayout) pagelink(p []byte, i int) (off int64) {
 
 	off = int64(binary.BigEndian.Uint64(v))
 
+	if l.v < 8 {
+		s := uint(8-l.v) * 8
+		off = off << s >> s
+	}
+
 	return
 }
 
@@ -142,7 +148,9 @@ func (l *FixedLayout) Alloc() (int64, error) {
 		return NilPage, err
 	}
 
-	tl.V("lalloc").Printf("layout alloc %3x %d", off, l.pm)
+	if tl.V("lalloc") != nil {
+		tl.Printf("layout alloc %3x %d", off, l.pm)
+	}
 
 	p := l.Access(off, 0x10)
 	l.setleaf(p, true)
@@ -172,7 +180,9 @@ func (l *FixedLayout) Free(off int64) error {
 
 	l.Unlock(p)
 
-	tl.V("lalloc").Printf("layout free  %x %d", off, pages)
+	if tl.V("lalloc") != nil {
+		tl.Printf("layout free  %x %d", off, pages)
+	}
 
 	err := l.Freelist.Free(off, ver, pages)
 	if err != nil {
@@ -461,22 +471,22 @@ func (l *FixedLayout) Insert(st Stack, ff int, k, v []byte) (_ Stack, err error)
 
 	off, i := st.LastOffIndex(l.Mask)
 
-	off0, off1, di, err := l.insert(off, i, ff, k, v)
+	off0, off1, split, err := l.insert(off, i, ff, k, v)
 	if err != nil {
 		return
 	}
 
-	if di == 0 {
+	if split == 0 {
 		st[len(st)-1] = MakeOffIndex(off0, i)
 	} else {
-		st[len(st)-1] = MakeOffIndex(off1, i-di)
-		di = 1
+		st[len(st)-1] = MakeOffIndex(off1, i-split)
+		split = 1
 	}
 
-	return l.out(st, off0, off1, di, false)
+	return l.out(st, off0, off1, split, false)
 }
 
-func (l *FixedLayout) insert(off int64, i int, ff int, k, v []byte) (off0, off1 int64, di int, err error) {
+func (l *FixedLayout) insert(off int64, i int, ff int, k, v []byte) (off0, off1 int64, _ int, err error) {
 	var alloc, split bool
 
 again:
@@ -517,7 +527,7 @@ again:
 	return off, NilPage, 0, nil
 }
 
-func (l *FixedLayout) insertSplit(off int64, i, ff int, k, v []byte) (off0, off1 int64, di int, err error) {
+func (l *FixedLayout) insertSplit(off int64, i, ff int, k, v []byte) (off0, off1 int64, split int, err error) {
 	off, err = l.realloc(off, l.pm, 2*l.pm)
 	if err != nil {
 		return
@@ -535,11 +545,11 @@ func (l *FixedLayout) insertSplit(off int64, i, ff int, k, v []byte) (off0, off1
 			l.pageInsert(p[:l.p], i, m, ff, k, v)
 		} else {
 			l.pageInsert(p[l.p:], i-m, n-m, ff, k, v)
-			di = m
+			split = m
 		}
 	}()
 
-	return off, off + l.p, di, nil
+	return off, off + l.p, split, nil
 }
 
 func (l *FixedLayout) pageInsert(p []byte, i, n, ff int, k, v []byte) {
@@ -593,7 +603,8 @@ func (l *FixedLayout) pageSplit(p, r []byte, n int) int {
 
 func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ Stack, err error) {
 	var bufdata [30]byte
-	buf := bufdata[:]
+	buf1 := bufdata[:]
+	buf := *(*[]byte)(noescape(unsafe.Pointer(&buf1)))
 
 	for d := len(s) - 2; d >= 0; d-- {
 		off, i := s[d].OffIndex(l.Mask)

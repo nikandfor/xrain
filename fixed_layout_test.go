@@ -152,24 +152,24 @@ func testLayoutPutDel(t *testing.T, l Layout) {
 
 	tr := NewLayoutShortcut(l, NilPage, Page-1)
 
-	err := tr.Put(0x1, []byte("key_a"), []byte("value_a"), nil)
+	_, err := tr.Put(0x1, []byte("key_a"), []byte("value_a"), nil)
 	assert.NoError(t, err)
 
-	err = tr.Put(0x3, []byte("key_c"), []byte("value_c"), nil)
+	_, err = tr.Put(0x3, []byte("key_c"), []byte("value_c"), nil)
 	assert.NoError(t, err)
 
-	err = tr.Put(0x2, []byte("key_b"), []byte("value_b"), nil)
+	_, err = tr.Put(0x2, []byte("key_b"), []byte("value_b"), nil)
 	assert.NoError(t, err)
 
-	err = tr.Put(0x4, []byte("key_d"), []byte("value_d"), nil)
+	_, err = tr.Put(0x4, []byte("key_d"), []byte("value_d"), nil)
 	assert.NoError(t, err)
 
 	tl.Printf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
 
-	err = tr.Del([]byte("key_a"), nil)
+	_, err = tr.Del([]byte("key_a"), nil)
 	assert.NoError(t, err)
 
-	err = tr.Del([]byte("key_d"), nil)
+	_, err = tr.Del([]byte("key_d"), nil)
 	assert.NoError(t, err)
 
 	tl.Printf("dump: %x\n%v", tr.Root, hex.Dump(b.d))
@@ -270,7 +270,7 @@ func testLayoutAuto(t *testing.T, l Layout) {
 				tl.V("cmd").Printf("CMD put %q -> %q  %x / %x", k, v, i, N)
 				exp[string(k)] = v
 				cnt[string(k)]++
-				err = tr.Put(j, k, v, nil)
+				_, err = tr.Put(j, k, v, nil)
 			case 2:
 				tl.V("cmd").Printf("CMD del %q        %x / %x", k, i, N)
 				if c := cnt[string(k)]; c > 0 {
@@ -279,7 +279,7 @@ func testLayoutAuto(t *testing.T, l Layout) {
 						delete(exp, string(k))
 					}
 				}
-				err = tr.Del(k, nil)
+				_, err = tr.Del(k, nil)
 			case 3:
 				val, ff := tr.Get(k, nil)
 				if v, ok := exp[string(k)]; ok {

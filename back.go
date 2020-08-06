@@ -75,8 +75,10 @@ func (b *MemBack) Truncate(s int64) error {
 
 	if cap(b.d) >= int(s) {
 		b.d = b.d[:s]
+
 		return nil
 	}
+
 	c := make([]byte, s)
 	copy(c, b.d)
 	b.d = c
@@ -93,4 +95,8 @@ func (b *MemBack) Size() int64 {
 
 func (b *MemBack) Sync() error {
 	return nil
+}
+
+func (b *MemBack) Bytes() []byte {
+	return b.d
 }

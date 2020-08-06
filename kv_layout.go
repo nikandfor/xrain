@@ -233,18 +233,18 @@ func (l *BaseLayout2) Step(st Stack, root int64, back bool) Stack {
 	q := len(st) - 1
 	off, i := st[q].OffIndex(l.Mask)
 
-	var n int
+	if back {
+		if i > 0 {
+			i--
+			goto fin
+		}
+	} else {
+		n := l.nKeys(off)
 
-	if back && i > 0 {
-		i--
-		goto fin
-	}
-
-	n = l.nKeys(off)
-
-	if i+1 < n {
-		i++
-		goto fin
+		if i+1 < n {
+			i++
+			goto fin
+		}
 	}
 
 	if l.Step(st[:q], NilPage, back) == nil {
@@ -374,16 +374,25 @@ func (l *KVLayout2) pagelink(p []byte, i int) (off int64) {
 		st += 1 + kl
 	}
 
-	sz := end - st
 	var buf [8]byte
 	var v []byte
+	sz := end - st
+
 	if sz >= 8 {
 		v = p[end-8 : end]
 	} else {
-		copy(buf[8-sz:], p[st:])
+		copy(buf[8-sz:], p[end-sz:end])
+		v = buf[:]
 	}
 
-	return int64(binary.BigEndian.Uint64(v))
+	off = int64(binary.BigEndian.Uint64(v))
+
+	if sz < 8 {
+		s := uint(8-sz) * 8
+		off = off << s >> s
+	}
+
+	return
 }
 
 func (l *KVLayout2) pagesetlink(p []byte, i int, off int64) {
@@ -398,19 +407,15 @@ func (l *KVLayout2) pagesetlink(p []byte, i int, off int64) {
 	kl := int(p[st])
 	st += 1 + kl
 
-	sz := end - st
 	var buf [8]byte
-	var v []byte
+	sz := end - st
+
+	binary.BigEndian.PutUint64(buf[:], uint64(off))
+
 	if sz >= 8 {
-		v = p[end-8 : end]
+		copy(p[end-8:], buf[:])
 	} else {
-		copy(buf[8-sz:], p[st:])
-	}
-
-	binary.BigEndian.PutUint64(v, uint64(off))
-
-	if sz < 8 {
-		copy(p[st:], buf[8-sz:])
+		copy(p[end-sz:], buf[8-sz:])
 	}
 }
 
@@ -711,6 +716,10 @@ func (l *KVLayout2) search(off int64, k, v []byte) (i, n int, coff int64, eq, is
 		cmp = bytes.Compare
 	}
 
+	if tl.V("search") != nil {
+		tl.Printf("search %4x %.20q", off, k)
+	}
+
 	ps := 1
 
 again:
@@ -898,7 +907,7 @@ func (l *KVLayout2) Insert(st Stack, ff int, k, v []byte) (_ Stack, err error) {
 }
 
 func (l *KVLayout2) insert(off int64, i, ff int, k, v []byte) (off0, off1, off2 int64, di int, err error) {
-	var alloc, split, triple bool
+	var alloc, split, triple, addbig bool
 	ps := 1
 
 again:
@@ -920,7 +929,9 @@ again:
 
 		triple = int64(kvIndexStart+exp) > 4*l.Page
 
-		if alloc || split || triple {
+		addbig = triple && (i == 0 || i == n)
+
+		if alloc || split || triple || addbig {
 			return
 		}
 
@@ -928,6 +939,8 @@ again:
 	}()
 
 	switch {
+	case addbig:
+		return l.insertAddBig(off, i, ff, k, v, ps)
 	case triple:
 		return l.insertTriple(off, i, ff, k, v, ps)
 	case split:
@@ -1048,11 +1061,13 @@ again:
 		exp := l.expectedsize(p, isleaf, 0, 0, ff, k, v)
 
 		switch {
+		case n == 0:
+			page0 = exp
 		case i == 0:
 			page0 = exp
-			page1 = oldpages * int(l.Page)
+			page1 = l.pagedatasize(p, 0, n)
 		case i == n:
-			page0 = oldpages * int(l.Page)
+			page0 = l.pagedatasize(p, 0, n)
 			page1 = exp
 		default:
 			page0 = l.pagedatasize(p, 0, i)
@@ -1071,16 +1086,26 @@ again:
 		}
 
 		if tl.V("insert,triple") != nil {
-			tl.Printf("insert %d / %d  to %3x triple %x %x %x  from %x + %x", i, n, off, page0, page1, page2, len(p), exp)
+			tl.Printf("insert %2d / %2d  to %3x triple %x %x %x  from %x + %x", i, n, off, page0, page1, page2, len(p), exp)
 		}
 
-		l.pageSplit(p, p0[:page0], p0[page0+page1:], i, n)
-		off1 = off0 + int64(page0)
+		if page2 != 0 {
+			l.pageSplit(p, p0[:page0], p0[page0+page1:], i, n)
+		}
+
+		if page1 != 0 {
+			off1 = off0 + int64(page0)
+		}
 
 		switch {
+		case n == 0:
+			l.pagesetheaders(p0, isleaf, 0)
+			l.pageInsert(p0, 0, 0, ff, k, v)
 		case i == 0:
+			l.pagesetheaders(p0[:page0], isleaf, 0)
 			l.pageInsert(p0[:page0], 0, 0, ff, k, v)
 		case i == n:
+			l.pagesetheaders(p0[page0:], isleaf, 0)
 			l.pageInsert(p0[page0:], 0, 0, ff, k, v)
 		default:
 			l.pagesetheaders(p0[page0:page0+page1], isleaf, 0)
@@ -1089,8 +1114,17 @@ again:
 			off2 = off1 + int64(page1)
 		}
 
-		if tl.V("triple_dump") != nil {
+		if tl.V("triple_dump2") != nil {
 			tl.Printf("triple dump %x + %x + %x\n%v", page0, page1, page2, hex.Dump(p0))
+		}
+		if tl.V("triple_dump") != nil {
+			tl.Printf("triple dump %x + %x + %x.  dump %x\n%v", page0, page1, page2, off0, l.dumpPage(off0))
+			if off1 != NilPage {
+				tl.Printf("dump %x\n%v", off1, l.dumpPage(off1))
+			}
+			if off2 != NilPage {
+				tl.Printf("dump %x\n%v", off2, l.dumpPage(off2))
+			}
 		}
 
 		di = i
@@ -1108,6 +1142,69 @@ again:
 		if err != nil {
 			return
 		}
+	}
+
+	return
+}
+
+func (l *KVLayout2) insertAddBig(off int64, i, ff int, k, v []byte, oldpages int) (off0, off1, off2 int64, di int, err error) {
+	var alloc, isleaf bool
+	var n int
+	off0, off1, off2 = NilPage, NilPage, NilPage
+	ps := oldpages
+
+again:
+	func() {
+		p := l.Access(off, int64(ps)*l.Page)
+		defer l.Unlock(p)
+
+		if off0 == NilPage {
+			isleaf = l.isleaf(p)
+			n = l.nkeys(p)
+
+			exp := l.expectedsize(p, isleaf, i, n, ff, k, v)
+			ps = l.pages(exp) / int(l.Page)
+
+			alloc = l.pagever(p) != l.Ver
+
+			if n == 0 && !alloc && ps == oldpages {
+				off0 = off
+			} else {
+				return
+			}
+
+			if tl.V("insert,addbig") != nil {
+				tl.Printf("insert %2d / %2d  off %4x -> %4x %4x  sz %4x = %3x * %4x = %4x", i, n, off, off0, off1, l.pages(exp), ps, l.Page, len(p))
+			}
+		}
+
+		i = 0
+		n = 0
+
+		l.pagesetheaders(p, isleaf, 0)
+		l.pageInsert(p, i, n, ff, k, v)
+	}()
+
+	if off0 == NilPage {
+		switch {
+		case n == 0:
+			off, err = l.realloc(off, oldpages, ps)
+			off0 = off
+		case i == 0:
+			off1 = off
+			off, err = l.Freelist.Alloc(ps)
+			off0 = off
+		case i == n:
+			off0 = off
+			off, err = l.Freelist.Alloc(ps)
+			off1 = off
+			di = n
+		}
+		if err != nil {
+			return
+		}
+
+		goto again
 	}
 
 	return
@@ -1373,7 +1470,7 @@ func (l *KVLayout2) pageDelete(p []byte, i, n int) {
 		diff := dend - end
 
 		if tl.V("delete") != nil {
-			tl.Printf("delete %d / %d  move %x-%x <- %x-%x %v", i, n, st+diff, st+diff+end-st, st, end, tl.VArg("delete_dump", "\n"+hex.Dump(p)))
+			tl.Printf("delete %d / %d  move %x-%x <- %x-%x %v", i, n, st+diff, st+diff+end-st, st, end, tl.VArg("delete_dump", "\n"+hex.Dump(p), ""))
 		}
 
 		copy(p[st+diff:], p[st:end])
@@ -1494,13 +1591,13 @@ func (l *KVLayout2) out(s Stack, off0, off1, off2 int64, di int, rebalance bool)
 			return nil, err
 		}
 
-		p := l.Access(root, l.Page)
-		l.pagesetheaders(p, false, 0)
-		l.Unlock(p)
-
 		if tl.V("out") != nil {
 			tl.Printf("out push root %x <- %x, %x, %x", root, off0, off1, off2)
 		}
+
+		p := l.Access(root, l.Page)
+		l.pagesetheaders(p, false, 0)
+		l.Unlock(p)
 
 		root, _, _, err = l.updatePageLink(root, 0, off0, false)
 		if err != nil {
@@ -1535,7 +1632,9 @@ func (l *KVLayout2) updatePageLink(off int64, i int, coff int64, del bool) (off0
 
 	off0, off1 = off, NilPage
 
-	tl.Printf("pagelink  %3x %d  ->  %3x %v", off, i, coff, del)
+	if tl.V("pagelink") != nil {
+		tl.Printf("pagelink  %3x %d  ->  %3x %v", off, i, coff, del)
+	}
 
 again:
 	remount := false
@@ -1608,7 +1707,6 @@ again:
 		split = kvIndexStart+usage > int(l.Page)
 
 		if alloc || split && ps == 1 {
-			tl.Printf("exit %v %v %v", alloc, split, ps)
 			return
 		}
 
@@ -1782,7 +1880,7 @@ func (l *KVLayout2) dumpPage(off int64) string {
 
 		if isleaf {
 			v := l.Value(st, nil)
-			fmt.Fprintf(&buf, "    %-20.10x -> %2x  %-12.6x  | %-22.20q -> %-.40q\n", k, ff, v, k, v)
+			fmt.Fprintf(&buf, "    %-20.10x -> %2x  %-12.6x  | %-22.20q -> %-.30q\n", k, ff, v, k, v)
 		} else {
 			v := l.link(st.LastOffIndex(l.Mask))
 			fmt.Fprintf(&buf, "    %-20.10x -> %16x  | %-22.20q\n", k, v, k)
@@ -1820,6 +1918,12 @@ func (l *KVLayout2) dumpFile() string {
 }
 
 func (l *KVLayout2) pages(s int) int {
+	if s == 0 {
+		return 0
+	}
+
+	s += kvIndexStart
+
 	p := int(l.Page)
 
 	return (s + p - 1) / p * p

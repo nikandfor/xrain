@@ -23,7 +23,7 @@ func TestSubpageLayout(t *testing.T) {
 
 	st, eq = l.Seek(st[:0], 0, []byte("key"), nil)
 	assert.False(t, eq)
-	assert.Nil(t, st)
+	assert.Equal(t, Stack{0}, st)
 
 	st, err := l.Delete(st)
 	assert.NoError(t, err)

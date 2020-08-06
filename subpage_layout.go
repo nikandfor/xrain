@@ -3,6 +3,7 @@ package xrain
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"sort"
 )
 
@@ -109,7 +110,8 @@ func (l *SubpageLayout) Search(k, v []byte) (i int, eq bool) {
 
 func (l *SubpageLayout) Seek(st Stack, _ int64, k, v []byte) (_ Stack, eq bool) {
 	if len(l.p) <= l.is {
-		return nil, false
+		st = append(st[:0], 0)
+		return st, false
 	}
 
 	var i int
@@ -147,7 +149,7 @@ func (l *SubpageLayout) Step(st Stack, _ int64, back bool) Stack {
 	} else {
 		n := l.nkeys()
 
-		if st[0] == OffIndex(n)-1 {
+		if st[0] >= OffIndex(n)-1 {
 			return nil
 		}
 
@@ -217,6 +219,11 @@ func (l *SubpageLayout) Int64(s Stack) (v int64) {
 
 	v = int64(binary.BigEndian.Uint64(b))
 
+	if sz < 8 {
+		s := uint(8-sz) * 8
+		v = v << s >> s
+	}
+
 	return
 }
 
@@ -244,6 +251,11 @@ func (l *SubpageLayout) SetInt64(s Stack, v int64) (old int64, err error) {
 	}
 
 	old = int64(binary.BigEndian.Uint64(b))
+
+	if sz < 8 {
+		s := uint(8-sz) * 8
+		old = old << s >> s
+	}
 
 	binary.BigEndian.PutUint64(b, uint64(v))
 
@@ -350,4 +362,21 @@ func (l *SubpageLayout) Delete(st Stack) (Stack, error) {
 	l.p = l.p[:dend]
 
 	return st, nil
+}
+
+func (l *SubpageLayout) dump() string {
+	var buf bytes.Buffer
+
+	n := l.nkeys()
+
+	fmt.Fprintf(&buf, "%x keys\n", n)
+
+	for i := 0; i < n; i++ {
+		k, ff := l.Key(Stack{OffIndex(i)}, nil)
+		v := l.Value(Stack{OffIndex(i)}, nil)
+
+		fmt.Fprintf(&buf, "    %-20.10x -> %2x  %-16.8x  | %-22.20q -> %-.40q\n", k, ff, v, k, v)
+	}
+
+	return buf.String()
 }

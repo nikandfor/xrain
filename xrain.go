@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/crc64"
+	"hash/crc32"
 	"io"
 	"log"
 	"sync"
@@ -18,7 +18,12 @@ const Version = "000"
 var (
 	DefaultPageSize int64 = 4 * KB
 
-	CRCTable = crc64.MakeTable(crc64.ECMA)
+	//	CRCTable = crc64.MakeTable(crc64.ECMA)
+	//	CRCTable = crc32.IEEETable
+	//	Checksum = crc32.ChecksumIEEE
+	ChecksumUpdate = func(s uint32, p []byte) uint32 {
+		return crc32.Update(s, crc32.IEEETable, p)
+	}
 
 	zeros [8]byte
 
@@ -69,7 +74,7 @@ type (
 
 		Freelist
 
-		Meta *LayoutShortcut
+		Meta LayoutShortcut
 	}
 
 	Serializer interface {
@@ -111,11 +116,12 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 
 	d.Meta.Meta = NewLayoutShortcut(d.metaLayout, 0, d.Mask)
 
-	fll := NewFixedLayout(&d.Meta)
-	d.Freelist, err = NewFreelist2(&d.Meta, fll, 5*d.Page, 6*d.Page)
-	if err != nil {
-		return
-	}
+	//	fll := NewFixedLayout(&d.Meta)
+	//	d.Freelist, err = NewFreelist2(&d.Meta, fll, 5*d.Page, 6*d.Page)
+	//	if err != nil {
+	//		return
+	//	}
+	d.Freelist = NewFreelist3(&d.Meta, 5*d.Page)
 
 	l.SetMeta(&d.Meta)
 
@@ -143,8 +149,9 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	}()
 
 	tx := newTx(d, d.l, root, false)
+	defer tx.free()
 
-	return f(&tx)
+	return f(tx)
 }
 
 func (d *DB) Update(f func(tx *Tx) error) error {
@@ -167,8 +174,9 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	d.mu.Unlock()
 
 	tx := newTx(d, d.l, d.root, true)
+	defer tx.free()
 
-	err = f(&tx)
+	err = f(tx)
 	if err != nil {
 		return err
 	}
@@ -178,21 +186,19 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 		return
 	}
 
+	if !d.NoSync {
+		err = d.b.Sync()
+		if err != nil {
+			return
+		}
+	}
+
 	d.mu.Lock()
 	d.okver = d.Ver
 	d.root = tx.oldroot
-	d.write++
-	d.safe++
+	d.safe = write
+	d.write = d.safe + 1
 	d.mu.Unlock()
-
-	if d.NoSync {
-		return nil
-	}
-
-	err = d.b.Sync()
-	if err != nil {
-		return
-	}
 
 	return nil
 }
@@ -209,8 +215,9 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	d.mu.Unlock()
 
 	tx := newTx(d, d.l, d.root, true)
+	defer tx.free()
 
-	err = f(&tx)
+	err = f(tx)
 	if err != nil {
 		return err
 	}
@@ -236,10 +243,6 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 }
 
 func (d *DB) sync() error {
-	d.mu.Lock()
-	d.write++
-	d.mu.Unlock()
-
 	err := d.b.Sync()
 	if err != nil {
 		return err
@@ -247,6 +250,7 @@ func (d *DB) sync() error {
 
 	d.mu.Lock()
 	d.safe++
+	d.write = d.safe + 1
 	d.mu.Unlock()
 
 	return nil
@@ -264,6 +268,10 @@ func (d *DB) updateKeep() {
 
 func (d *DB) writeRoot(writepage, ver, root int64) (err error) {
 	n := writepage & 0x3
+
+	if tl.V("dbroot") != nil {
+		tl.Printf("dbroot root %5x  ver %5x  wrpage %5x %x  safe %5x", root, ver, writepage, writepage&0x3, d.safe)
+	}
 
 	m := d.metaLayout.Bytes()
 
@@ -283,8 +291,8 @@ func (d *DB) writeRoot(writepage, ver, root int64) (err error) {
 
 	binary.BigEndian.PutUint64(p[0x10:], 0)
 
-	sum := crc64.Checksum(p, CRCTable)
-	binary.BigEndian.PutUint64(p[0x10:], sum)
+	sum := ChecksumUpdate(0, p)
+	binary.BigEndian.PutUint32(p[0x10:], sum)
 
 	d.b.Unlock(p)
 
@@ -369,10 +377,11 @@ again:
 
 		d.Mask = d.Page - 1
 
-		sum := crc64.Update(0, CRCTable, p[:0x10])
-		sum = crc64.Update(sum, CRCTable, zeros[:])
-		sum = crc64.Update(sum, CRCTable, p[0x18:])
-		rsum := binary.BigEndian.Uint64(p[0x10:])
+		sum := ChecksumUpdate(0, p[:0x10])
+		sum = ChecksumUpdate(sum, zeros[:8])
+		sum = ChecksumUpdate(sum, p[0x18:])
+
+		rsum := binary.BigEndian.Uint32(p[0x10:])
 		if sum != rsum {
 			err = ErrPageChecksum
 			return
@@ -392,6 +401,23 @@ again:
 	}
 
 	return
+}
+
+func DumpDB(d *DB) string {
+	return fmt.Sprintf("root %6x page %5x %5x ver %6x %6x okver %6x", d.root, d.Page, d.Mask, d.Ver, d.Keep, d.okver)
+}
+
+func DumpBucket(b *SimpleBucket) string {
+	return fmt.Sprintf("root %6x %6x name %q", b.oldroot, b.t.Root, b.name)
+}
+
+func DumpPage(l Layout, off int64) string {
+	d, ok := l.(pageDumper)
+	if !ok {
+		return ""
+	}
+
+	return d.dumpPage(off)
 }
 
 func InitTestLogger(t testing.TB, v string, tostderr bool) *tlog.Logger {

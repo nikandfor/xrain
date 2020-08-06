@@ -11,6 +11,7 @@ import (
 
 type (
 	MmapBack struct {
+		rw bool
 		mu sync.RWMutex
 		f  *os.File
 		d  []byte
@@ -19,25 +20,41 @@ type (
 
 var _ Back = &MmapBack{}
 
-func Mmap(n string) (*MmapBack, error) {
-	flags := os.O_CREATE | os.O_RDWR
+func Mmap(n string, flags int) (*MmapBack, error) {
+	if flags == 0 {
+		flags = os.O_CREATE | os.O_RDWR
+	}
 
 	f, err := os.OpenFile(n, flags, 0640)
 	if err != nil {
 		return nil, err
 	}
 
-	return MmapFile(f), nil
+	return MmapFile(f, flags&os.O_WRONLY == os.O_WRONLY)
 }
 
-func MmapFile(f *os.File) *MmapBack {
-	return &MmapBack{
-		f: f,
+func MmapFile(f *os.File, rw bool) (_ *MmapBack, err error) {
+	b := &MmapBack{
+		rw: rw,
+		f:  f,
 	}
+
+	s := b.Size()
+
+	if s == 0 {
+		return b, nil
+	}
+
+	err = b.mmap(0, s)
+	if err != nil {
+		return nil, err
+	}
+
+	return b, nil
 }
 
 func (b *MmapBack) Close() error {
-	err := b.close()
+	err := b.unmap()
 	if err != nil {
 		return err
 	}
@@ -45,12 +62,26 @@ func (b *MmapBack) Close() error {
 	return b.f.Close()
 }
 
-func (b *MmapBack) close() error {
+func (b *MmapBack) unmap() error {
 	if b.d == nil {
 		return nil
 	}
 
 	err := syscall.Munmap(b.d)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *MmapBack) mmap(off, len int64) (err error) {
+	flags := syscall.PROT_READ
+	if b.rw {
+		flags |= syscall.PROT_WRITE
+	}
+
+	b.d, err = syscall.Mmap(int(b.f.Fd()), off, int(len), flags, syscall.MAP_SHARED)
 	if err != nil {
 		return err
 	}
@@ -106,7 +137,7 @@ func (b *MmapBack) Truncate(s int64) (err error) {
 		tl.Printf("back truncate %5x <- %5x", s, len(b.d))
 	}
 
-	err = b.close()
+	err = b.unmap()
 	if err != nil {
 		return
 	}
@@ -116,7 +147,7 @@ func (b *MmapBack) Truncate(s int64) (err error) {
 		return err
 	}
 
-	b.d, err = syscall.Mmap(int(b.f.Fd()), 0, int(s), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	err = b.mmap(0, s)
 	if err != nil {
 		return err
 	}
@@ -128,7 +159,16 @@ func (b *MmapBack) Size() int64 {
 	defer b.mu.RUnlock()
 	b.mu.RLock()
 
-	return int64(len(b.d))
+	if b.d != nil {
+		return int64(len(b.d))
+	}
+
+	inf, err := b.f.Stat()
+	if err != nil {
+		panic(err)
+	}
+
+	return inf.Size()
 }
 
 func (b *MmapBack) Sync() error {

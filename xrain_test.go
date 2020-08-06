@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
-	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -105,7 +104,7 @@ func TestXRainSmoke(t *testing.T) {
 		tl.Printf("header pages 2, 3:\n%v%v", hex.Dump(off0), hex.Dump(off1))
 		b.Unlock2(off0, off1)
 
-		tl.Printf("dump root %x free %x next %x\n%v", db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
+		//	tl.Printf("dump root %x free %x next %x\n%v", db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
 	}
 }
 
@@ -119,7 +118,7 @@ func TestXRainSmokeConcurrent(t *testing.T) {
 	db, err := NewDB(b, Page, l)
 	assert.NoError(t, err)
 
-	tl.Printf("dump root %x free %x next %x\n%v", db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
+	//	tl.Printf("dump root %x free %x next %x\n%v", db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
 
 	var wg sync.WaitGroup
 	wg.Add(2 * N)
@@ -206,12 +205,21 @@ func TestXRainHeavy(t *testing.T) {
 	}
 }
 
-func BenchmarkXRian(b *testing.B) {
+func BenchmarkXRainFixed(b *testing.B) {
 	b.ReportAllocs()
 
 	initLogger(b)
 
 	bk := NewMemBack(0)
+
+	defer func() {
+		f, err := os.Create("/tmp/xrain_fixed_bench.xrain")
+		if err != nil {
+			tlog.Fatalf("open: %v", err)
+		}
+
+		f.Write(bk.Bytes())
+	}()
 
 	l := NewFixedLayout(nil)
 	l.SetKVSize(1, 7, 8, 1)
@@ -219,25 +227,89 @@ func BenchmarkXRian(b *testing.B) {
 	db, err := NewDB(bk, 0, l)
 	require.NoError(b, err)
 
+	bucket := []byte("bucket0")
 	k := []byte("key_000")
+	v := []byte("value_00")
 
 	for i := 0; i < b.N; i++ {
 		err = db.Update(func(tx *Tx) error {
-			b, err := tx.PutBucket([]byte("bucket0"))
+			b, err := tx.PutBucket(bucket)
 			if err != nil {
 				return err
 			}
 
-			kn := fmt.Sprintf("%03x", i)
-			copy(k[len(k)-len(kn):], kn)
+			tokey(k, i)
 
-			return b.Put(k, []byte("value_00"))
+			return b.Put(k, v)
 		})
 
 		if err != nil {
 			b.Errorf("update: %v", err)
 			break
 		}
+	}
+}
+
+func BenchmarkXRainKV(b *testing.B) {
+	b.ReportAllocs()
+
+	initLogger(b)
+
+	bk := NewMemBack(0)
+
+	defer func() {
+		f, err := os.Create("/tmp/xrain_kv_bench.xrain")
+		if err != nil {
+			tl.Fatalf("open: %v", err)
+		}
+
+		n, err := f.Write(bk.Bytes())
+		if err != nil {
+			tl.Fatalf("write: %v", err)
+		}
+
+		tl.Printf("db written: %v   (%x/%d bytes)", f.Name(), n, n)
+	}()
+
+	l := NewKVLayout2(nil)
+
+	db, err := NewDB(bk, 0, l)
+	require.NoError(b, err)
+
+	bucket := []byte("bucket0")
+	k := []byte("key_000")
+	v := []byte("value_00")
+
+	var i int
+	for i = 0; i < b.N; i++ {
+		err = db.Update(func(tx *Tx) error {
+			b, err := tx.PutBucket(bucket)
+			if err != nil {
+				return err
+			}
+
+			tokey(k, i)
+
+			return b.Put(k, v)
+		})
+
+		if err != nil {
+			tl.Printf("update: %v", err)
+			b.Fail()
+			break
+		}
+	}
+
+	tl.Printf("%x (%d) keys written", i, i)
+	tl.Printf("db %v", DumpDB(db))
+}
+
+func tokey(k []byte, i int) {
+	l := len(k) - 1
+	for i != 0 {
+		k[l] = "0123456789abcdef"[i&0xf]
+		l--
+		i >>= 4
 	}
 }
 
