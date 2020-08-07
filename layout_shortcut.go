@@ -163,6 +163,7 @@ func (t *LayoutShortcut) AddInt64(k []byte, v int64, s Stack) (off int64, _ Stac
 	}
 
 	off, err = t.Layout.AddInt64(s, v)
+
 	return off, s, err
 }
 

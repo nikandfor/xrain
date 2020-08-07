@@ -43,6 +43,12 @@ func main() {
 				Name:   "pages",
 				Action: dumppages,
 			}},
+		}, {
+			Name:   "stats",
+			Action: stats,
+			Flags: []*cli.Flag{
+				cli.NewFlag("file,f", "", ""),
+			},
 		}},
 	}
 
@@ -59,8 +65,36 @@ func before(c *cli.Command) error {
 	return nil
 }
 
+func stats(c *cli.Command) (err error) {
+	bk, err := xrain.Mmap(c.String("file"), os.O_RDONLY)
+	if err != nil {
+		return
+	}
+	defer bk.Close()
+
+	db, err := xrain.NewDB(bk, 0, nil)
+	if err != nil {
+		return
+	}
+
+	m := &db.Meta
+
+	for st, _ := m.Meta.Seek([]byte("stats."), nil, nil); st != nil; st = m.Meta.Step(st, 0, false) {
+		k, _ := m.Meta.Layout.Key(st, nil)
+		if !bytes.HasPrefix(k, []byte("stats.")) {
+			break
+		}
+
+		v := m.Meta.Layout.Int64(st)
+
+		fmt.Printf("%-30s  %6d  / %6x (hex)\n", k, v, v)
+	}
+
+	return nil
+}
+
 func dumppages(c *cli.Command) (err error) {
-	xrain.InitTestLogger(nil, c.String("v"), true)
+	//	xrain.InitTestLogger(nil, c.String("v"), true)
 
 	bk, err := xrain.Mmap(c.String("file"), os.O_RDONLY)
 	if err != nil {

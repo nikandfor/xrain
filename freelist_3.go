@@ -17,8 +17,10 @@ type (
 		buf   []byte
 		stbuf Stack
 
-		nextkey []byte
-		datakey []byte
+		nextkey   []byte
+		datakey   []byte
+		allocskey []byte
+		freeskey  []byte
 
 		k, v int
 	}
@@ -28,15 +30,17 @@ var _ Freelist = &Freelist3{}
 
 func NewFreelist3(m *Meta, next int64) *Freelist3 {
 	l := &Freelist3{
-		l:       *NewSubpageLayout(nil),
-		Meta:    m,
-		next:    next,
-		buf:     make([]byte, 16),
-		stbuf:   Stack{0},
-		nextkey: []byte("freelist3.next"),
-		datakey: []byte("freelist3.data"),
-		k:       6,
-		v:       6,
+		l:         *NewSubpageLayout(nil),
+		Meta:      m,
+		next:      next,
+		buf:       make([]byte, 16),
+		stbuf:     Stack{0},
+		nextkey:   []byte("freelist3.next"),
+		datakey:   []byte("freelist3.data"),
+		allocskey: []byte("stats.pgalloc"),
+		freeskey:  []byte("stats.pgfree"),
+		k:         6,
+		v:         6,
 	}
 
 	l.init()
@@ -91,6 +95,14 @@ func (l *Freelist3) flush() (err error) {
 	return
 }
 
+func (l *Freelist3) metric(k []byte, v int) {
+	if l.Meta == nil || l.Meta.Meta.Layout == nil {
+		return
+	}
+
+	_, l.stbuf, _ = l.Meta.Meta.AddInt64(k, int64(v), l.stbuf[:0])
+}
+
 func (l *Freelist3) Free(off, ver int64, n int) (err error) {
 	if tl.V("free") != nil {
 		tl.Printf("freei %3x %4x %4x", n, off, ver)
@@ -98,6 +110,8 @@ func (l *Freelist3) Free(off, ver int64, n int) (err error) {
 			tl.Printf("freeo %3x %4x %4x", n, off, ver)
 		}()
 	}
+
+	l.metric(l.freeskey, n)
 
 	err = l.free(off, ver, n)
 	if err != nil {
@@ -167,6 +181,8 @@ func (l *Freelist3) Alloc(n int) (off int64, err error) {
 			tl.Printf("alloc %3x %4x %4x", n, off, ver)
 		}()
 	}
+
+	l.metric(l.allocskey, n)
 
 	nsize := nsize(n)
 	st := l.stbuf[:0]

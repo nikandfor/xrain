@@ -41,6 +41,11 @@ type (
 		linkf      func(off int64, i int) int64
 		searchf    func(off int64, k, v []byte) (i, n int, coff int64, eq, isleaf bool)
 		firstLastf func(st Stack, off int64, back bool) Stack
+
+		stbuf Stack
+
+		kDataBytes []byte
+		kFreeBytes []byte
 	}
 
 	KVLayout2 struct { // base [16]byte, offsets [size]int16, data []{...}
@@ -178,6 +183,14 @@ func (l *BaseLayout2) realloc(off int64, oldn, n int) (noff int64, err error) {
 	return
 }
 
+func (l *BaseLayout2) metric(k []byte, d int) {
+	if l.Meta == nil || l.Meta.Meta.Layout == nil {
+		return
+	}
+
+	_, l.stbuf, _ = l.Meta.Meta.AddInt64(k, int64(d), l.stbuf)
+}
+
 func (l *BaseLayout2) SetMeta(m *Meta) { l.Meta = m }
 
 func (l *BaseLayout2) Alloc() (int64, error) {
@@ -283,7 +296,12 @@ fin:
 }
 
 func NewKVLayout2(m *Meta) *KVLayout2 {
-	var l KVLayout2
+	l := &KVLayout2{
+		BaseLayout2: BaseLayout2{
+			kDataBytes: []byte("stats.data"),
+			kFreeBytes: []byte("stats.free"),
+		},
+	}
 
 	l.Meta = m
 	l.linkf = l.link
@@ -292,7 +310,7 @@ func NewKVLayout2(m *Meta) *KVLayout2 {
 
 	l.init()
 
-	return &l
+	return l
 }
 
 func (l *KVLayout2) SetMeta(m *Meta) { l.Meta = m; l.init() }

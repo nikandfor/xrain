@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"io"
-	"log"
 	"sync"
 	"testing"
 
@@ -63,6 +61,13 @@ type (
 
 		safe, write int64
 
+		kRTx     []byte
+		kRWTx    []byte
+		kRTxErr  []byte
+		kRWTxErr []byte
+
+		stbuf Stack
+
 		wmu sync.Mutex
 	}
 
@@ -98,7 +103,11 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 		Meta: Meta{
 			Back: b,
 		},
-		keepl: make(map[int64]int),
+		keepl:    make(map[int64]int),
+		kRTx:     []byte("stats.rtx"),
+		kRWTx:    []byte("stats.rwtx"),
+		kRTxErr:  []byte("stats.rtxerr"),
+		kRWTxErr: []byte("stats.rwtxerr"),
 	}
 
 	// root = 4 * page
@@ -131,7 +140,7 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 	return d, nil
 }
 
-func (d *DB) View(f func(tx *Tx) error) error {
+func (d *DB) View(f func(tx *Tx) error) (err error) {
 	d.mu.Lock()
 	root := d.root
 	ver := d.okver
@@ -151,15 +160,29 @@ func (d *DB) View(f func(tx *Tx) error) error {
 	tx := newTx(d, d.l, root, false)
 	defer tx.free()
 
-	return f(tx)
+	err = f(tx)
+
+	d.metric(d.kRTx, 1)
+	if err != nil {
+		d.metric(d.kRTxErr, 1)
+	}
+
+	return err
 }
 
-func (d *DB) Update(f func(tx *Tx) error) error {
+func (d *DB) Update(f func(tx *Tx) error) (err error) {
 	if d.NoSync {
-		return d.update0(f)
+		err = d.update0(f)
 	} else {
-		return d.update1(f)
+		err = d.update1(f)
 	}
+
+	d.metric(d.kRWTx, 1)
+	if err != nil {
+		d.metric(d.kRWTxErr, 1)
+	}
+
+	return
 }
 
 // synchronized calls
@@ -240,6 +263,10 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	}
 
 	return nil
+}
+
+func (d *DB) metric(k []byte, v int) {
+	_, d.stbuf, _ = d.Meta.Meta.AddInt64(k, int64(v), d.stbuf)
 }
 
 func (d *DB) sync() error {
@@ -421,19 +448,6 @@ func DumpPage(l Layout, off int64) string {
 }
 
 func InitTestLogger(t testing.TB, v string, tostderr bool) *tlog.Logger {
-	var w io.Writer = log.Writer()
-	ff := tlog.LdetFlags
-
-	if t != nil && !tostderr {
-		w = newTestingWriter(t)
-		ff = 0
-	}
-
-	tl = tlog.New(tlog.NewConsoleWriter(w, ff))
-
-	if v != "" {
-		tl.SetFilter(v)
-	}
-
+	tl = tlog.NewTestLogger(t, v, tostderr)
 	return tl
 }

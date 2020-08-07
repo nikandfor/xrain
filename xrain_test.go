@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
-	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -451,8 +450,8 @@ func (t *HeavyTester) worker(c, r chan HeavyTask) {
 }
 
 var (
-	flagv  = flag.String("tlog-v", "", "verbocity topics")
-	stderr = flag.Bool("tlog-to-stderr", false, "log to stderr, not in testing.T")
+	flagv    = flag.String("tlog-v", "", "verbocity topics")
+	tostderr = flag.Bool("tlog-to-stderr", false, "log to stderr, not in testing.T")
 
 //	det = flag.Bool("detailed", false, "detailed logs")
 //	no  = flag.Bool("no-logs", false, "hide logs")
@@ -467,17 +466,5 @@ func TestMain(m *testing.M) {
 }
 
 func initLogger(t testing.TB) {
-	var w io.Writer = log.Writer()
-	ff := tlog.LdetFlags
-
-	if t != nil && !*stderr {
-		w = newTestingWriter(t)
-		ff = 0
-	}
-
-	tl = tlog.New(tlog.NewConsoleWriter(w, ff))
-
-	if *flagv != "" {
-		tl.SetFilter(*flagv)
-	}
+	tl = tlog.NewTestLogger(t, *flagv, *tostderr)
 }
