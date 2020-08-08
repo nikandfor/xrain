@@ -44,7 +44,7 @@ func TestTxBucket(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	//	tl.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
+	tl.Printf("dump ver %x/%x  root %x  fnext %x\n%v\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist3).next, db.Meta.Meta.Layout.(*SubpageLayout).dump(), db.l.(fileDumper).dumpFile())
 
 	err = db.Update(func(tx *Tx) error {
 		b0 := tx.Bucket([]byte("bucket0"))
@@ -65,7 +65,7 @@ func TestTxBucket(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	//	tl.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
+	tl.Printf("dump ver %x/%x  root %x  fnext %x\n%v\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist3).next, db.Meta.Meta.Layout.(*SubpageLayout).dump(), db.l.(fileDumper).dumpFile())
 
 	err = db.Update(func(tx *Tx) error {
 		b0 := tx.Bucket([]byte("bucket0"))
@@ -86,6 +86,8 @@ func TestTxBucket(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
+	tl.Printf("dump ver %x/%x  root %x  fnext %x\n%v\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist3).next, db.Meta.Meta.Layout.(*SubpageLayout).dump(), db.l.(fileDumper).dumpFile())
+
 	err = db.View(func(tx *Tx) error {
 		b := tx.Bucket([]byte("bucket0"))
 		assert.Nil(t, b)
@@ -105,5 +107,5 @@ func TestTxBucket(t *testing.T) {
 	tl.Printf("header pages 2, 3:\n%v\n%v", hex.Dump(off0), hex.Dump(off1))
 	b.Unlock2(off0, off1)
 
-	//	tl.Printf("dump ver %x/%x root %x free %x next %x\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist2).t.Root, db.Freelist.(*Freelist2).next, db.l.(fileDumper).dumpFile())
+	tl.Printf("dump ver %x/%x  root %x  fnext %x\n%v\n%v", db.Ver, db.Keep, db.root, db.Freelist.(*Freelist3).next, db.Meta.Meta.Layout.(*SubpageLayout).dump(), db.l.(fileDumper).dumpFile())
 }

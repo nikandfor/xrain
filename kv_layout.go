@@ -20,6 +20,7 @@ type (
 		Seek(s Stack, root int64, k, v []byte) (Stack, bool)
 		Step(s Stack, root int64, back bool) Stack
 
+		Flags(s Stack) int
 		Key(s Stack, buf []byte) ([]byte, int)
 		Value(s Stack, buf []byte) []byte
 

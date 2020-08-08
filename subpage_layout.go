@@ -9,11 +9,11 @@ import (
 
 type SubpageLayout struct {
 	p      []byte
-	is, ls int
+	is, ls int // index size, link size
 }
 
-func NewSubpageLayout(p []byte) *SubpageLayout {
-	l := &SubpageLayout{
+func NewSubpageLayout(p []byte) SubpageLayout {
+	l := SubpageLayout{
 		is: 2,
 		ls: 2,
 	}
@@ -79,6 +79,8 @@ func (l *SubpageLayout) Search(k, v []byte) (i int, eq bool) {
 
 	keycmp := func(i int, cmpval bool) (c int) {
 		st := l.dataoff(i, n)
+		st++ // flags
+
 		kl := int(l.p[st])
 		st++
 
@@ -159,7 +161,22 @@ func (l *SubpageLayout) Step(st Stack, _ int64, back bool) Stack {
 	}
 }
 
-func (l *SubpageLayout) Key(st Stack, buf []byte) ([]byte, int) {
+func (l *SubpageLayout) Flags(st Stack) (ff int) {
+	if len(l.p) <= l.is {
+		return 0
+	}
+
+	i := int(st[0])
+	n := l.nkeys()
+
+	dst := l.dataoff(i, n)
+
+	ff = int(l.p[dst])
+
+	return
+}
+
+func (l *SubpageLayout) Key(st Stack, buf []byte) (k []byte, ff int) {
 	if len(l.p) <= l.is {
 		return nil, 0
 	}
@@ -168,15 +185,19 @@ func (l *SubpageLayout) Key(st Stack, buf []byte) ([]byte, int) {
 	n := l.nkeys()
 
 	dst := l.dataoff(i, n)
+
+	ff = int(l.p[dst])
+	dst++
+
 	kl := int(l.p[dst])
 	dst++
 
-	buf = append(buf, l.p[dst:dst+kl]...)
+	k = append(buf, l.p[dst:dst+kl]...)
 
-	return buf, 0
+	return
 }
 
-func (l *SubpageLayout) Value(st Stack, buf []byte) []byte {
+func (l *SubpageLayout) Value(st Stack, buf []byte) (v []byte) {
 	if len(l.p) <= l.is {
 		return nil
 	}
@@ -186,12 +207,15 @@ func (l *SubpageLayout) Value(st Stack, buf []byte) []byte {
 
 	dst := l.dataoff(i, n)
 	dend := l.dataend(i)
+
+	dst++ // flags
+
 	kl := int(l.p[dst])
 	dst += 1 + kl
 
-	buf = append(buf, l.p[dst:dend]...)
+	v = append(buf, l.p[dst:dend]...)
 
-	return buf
+	return
 }
 
 func (l *SubpageLayout) Int64(s Stack) (v int64) {
@@ -204,6 +228,9 @@ func (l *SubpageLayout) Int64(s Stack) (v int64) {
 
 	st := l.dataoff(i, n)
 	end := l.dataend(i)
+
+	st++ // flags
+
 	kl := int(l.p[st])
 	st += 1 + kl
 	sz := end - st
@@ -237,6 +264,9 @@ func (l *SubpageLayout) SetInt64(s Stack, v int64) (old int64, err error) {
 
 	st := l.dataoff(i, n)
 	end := l.dataend(i)
+
+	st++ // flags
+
 	kl := int(l.p[st])
 	st += 1 + kl
 	sz := end - st
@@ -272,8 +302,8 @@ func (l *SubpageLayout) AddInt64(s Stack, v int64) (new int64, err error) {
 	return
 }
 
-func (l *SubpageLayout) Insert(st Stack, _ int, k, v []byte) (Stack, error) {
-	dsize := 1 + len(k) + len(v)
+func (l *SubpageLayout) Insert(st Stack, ff int, k, v []byte) (Stack, error) {
+	dsize := 2 + len(k) + len(v)
 
 	var dst, dend int
 	var i, n int
@@ -312,8 +342,12 @@ func (l *SubpageLayout) Insert(st Stack, _ int, k, v []byte) (Stack, error) {
 		l.setdataend(j, off+l.ls)
 	}
 
+	l.p[dst] = byte(ff)
+	dst++
+
 	l.p[dst] = byte(len(k))
 	dst++
+
 	copy(l.p[dst:], k)
 	copy(l.p[dst+len(k):], v)
 

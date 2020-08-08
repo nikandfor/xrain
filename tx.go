@@ -21,10 +21,8 @@ type (
 		tx      *Tx
 		par     *SimpleBucket
 		name    []byte
-		l       Layout
 		t       LayoutShortcut
-		oldroot int64
-		flags   FlagsSupported
+		rootbuf int64
 
 		stbuf Stack
 	}
@@ -47,6 +45,10 @@ var ( // pools
 			buckets: make([]*SimpleBucket, 10),
 		}
 	}}
+
+	bsPool = sync.Pool{New: func() interface{} {
+		return make([]byte, 0x1000)
+	}}
 )
 
 func newTx(d *DB, l Layout, root int64, w bool) *Tx {
@@ -63,18 +65,14 @@ func newTx(d *DB, l Layout, root int64, w bool) *Tx {
 }
 
 func newBucket(tx *Tx, l Layout, root int64, name []byte, par *SimpleBucket) *SimpleBucket {
-	ff, _ := l.(FlagsSupported)
-
 	b := bkPool.Get().(*SimpleBucket)
 
 	*b = SimpleBucket{
 		tx:      tx,
 		par:     par,
 		name:    name,
-		l:       l,
 		t:       NewLayoutShortcut(l, root, tx.d.Mask),
-		oldroot: root,
-		flags:   ff,
+		rootbuf: root,
 		stbuf:   b.stbuf,
 	}
 
@@ -84,6 +82,17 @@ func newBucket(tx *Tx, l Layout, root int64, name []byte, par *SimpleBucket) *Si
 }
 
 func (tx *Tx) free() {
+	if l, ok := tx.SimpleBucket.t.Layout.(*SubpageLayout); ok {
+		if tx.writable {
+			tx.rootbuf = NilPage
+
+			_, _ = tx.d.Meta.Meta.Set(0, []byte("root"), l.Bytes(), nil)
+		}
+
+		bsPool.Put(l.Bytes())
+		tx.SimpleBucket.t.Layout = nil
+	}
+
 	for _, b := range tx.buckets {
 		bkPool.Put(b)
 	}
@@ -109,7 +118,7 @@ func (b *SimpleBucket) put(ff int, k, v []byte) (err error) {
 	}()
 
 	st, eq := b.t.Seek(k, nil, st)
-	if eq && b.flags != nil && b.flags.Flags(st) != ff {
+	if eq && b.t.Layout.Flags(st) != ff {
 		return ErrTypeMismatch
 	}
 
@@ -174,23 +183,19 @@ func (b *SimpleBucket) Bucket(k []byte) *SimpleBucket {
 		return nil
 	}
 
-	st, eq := b.l.Seek(nil, b.t.Root, k, nil)
+	st, eq := b.t.Layout.Seek(nil, b.t.Root, k, nil)
 	if !eq {
 		return nil
 	}
 
-	F := 0
-	if b.flags != nil {
-		F = b.flags.Flags(st)
-		if F == 0 {
-			return nil
-		}
+	if b.t.Layout.Flags(st) == 0 {
+		return nil
 	}
 
-	v := b.l.Value(st, nil)
+	v := b.t.Layout.Value(st, nil)
 	off := int64(binary.BigEndian.Uint64(v))
 
-	sub := newBucket(b.tx, b.l, off, k, b)
+	sub := newBucket(b.tx, b.tx.d.l, off, k, b)
 
 	return sub
 }
@@ -207,13 +212,13 @@ func (b *SimpleBucket) PutBucket(k []byte) (_ *SimpleBucket, err error) {
 
 	st, eq := b.t.Seek(k, nil, st)
 	if eq {
-		if b.flags != nil && b.flags.Flags(st) != 1 {
+		if b.t.Layout.Flags(st) != 1 {
 			return nil, ErrTypeMismatch
 		}
 
 		off := b.t.Layout.Int64(st)
 
-		return newBucket(b.tx, b.l, off, k, b), nil
+		return newBucket(b.tx, b.tx.d.l, off, k, b), nil
 	}
 
 	var buf [8]byte
@@ -225,7 +230,7 @@ func (b *SimpleBucket) PutBucket(k []byte) (_ *SimpleBucket, err error) {
 		return nil, err
 	}
 
-	sub := newBucket(b.tx, b.l, off, k, b)
+	sub := newBucket(b.tx, b.tx.d.l, off, k, b)
 
 	return sub, nil
 }
@@ -240,7 +245,7 @@ func (b *SimpleBucket) DelBucket(k []byte) (err error) {
 		return nil
 	}
 
-	if b.flags != nil && b.flags.Flags(st) != 1 {
+	if b.t.Layout.Flags(st) != 1 {
 		return ErrTypeMismatch
 	}
 
@@ -269,17 +274,14 @@ func (b *SimpleBucket) delBucket(root int64) error {
 		return nil
 	}
 
-	if b.flags == nil {
-		return b.l.Free(root)
-	}
+	l := b.tx.d.l
 
-	for st := b.l.Step(nil, root, false); st != nil; st = b.l.Step(st, root, false) {
-		F := b.flags.Flags(st)
-		if F == 0 {
+	for st := l.Step(nil, root, false); st != nil; st = l.Step(st, root, false) {
+		if l.Flags(st) == 0 {
 			continue
 		}
 
-		sub := b.l.Int64(st)
+		sub := l.Int64(st)
 
 		err := b.delBucket(sub)
 		if err != nil {
@@ -287,7 +289,7 @@ func (b *SimpleBucket) delBucket(root int64) error {
 		}
 	}
 
-	err := b.l.Free(root)
+	err := l.Free(root)
 	if err != nil {
 		return err
 	}
@@ -300,7 +302,7 @@ func (b *SimpleBucket) allocRoot() error {
 		return nil
 	}
 
-	off, err := b.l.Alloc()
+	off, err := b.t.Layout.Alloc()
 	if err != nil {
 		return err
 	}
@@ -330,11 +332,11 @@ func (b *SimpleBucket) checkNotDeleted() (err error) {
 		return ErrDeletedBucket
 	}
 
-	if b.par.flags != nil && b.par.flags.Flags(st) != 1 {
+	if b.par.t.Layout.Flags(st) != 1 {
 		return ErrTypeMismatch
 	}
 
-	if b.par.t.Layout.Int64(st) != b.oldroot {
+	if b.par.t.Layout.Int64(st) != b.rootbuf {
 		return ErrDeletedBucket
 	}
 
@@ -343,9 +345,10 @@ func (b *SimpleBucket) checkNotDeleted() (err error) {
 
 func (b *SimpleBucket) propagate() error {
 	root := b.t.Root
-	//	tl.Printf("propogate: %x <- %x  par %v", root, b.oldroot, b.par)
-	if b.par == nil || root == b.oldroot {
-		b.oldroot = root
+
+	//	tl.Printf("propogate: %x <- %x  par %v  layout %T", root, b.rootbuf, b.par, b.t.Layout)
+	if b.par == nil || root == b.rootbuf {
+		b.rootbuf = root
 		return nil
 	}
 
@@ -360,7 +363,7 @@ func (b *SimpleBucket) propagate() error {
 		return err
 	}
 
-	b.oldroot = root
+	b.rootbuf = root
 
 	return nil
 }
@@ -379,12 +382,11 @@ func (b *SimpleBucket) allowed(w bool) (err error) {
 
 func (b *SimpleBucket) Tree() *LayoutShortcut { return &b.t }
 
-func (b *SimpleBucket) Layout() Layout { return b.l }
+func (b *SimpleBucket) Layout() Layout { return b.t.Layout }
 
 func (b *SimpleBucket) Tx() *Tx { return b.tx }
 
 func (b *SimpleBucket) SetLayout(l Layout) {
-	b.l = l
 	b.t.Layout = l
 }
 
@@ -400,12 +402,3 @@ func inc(k []byte) {
 func (tx *Tx) IsWritable() bool { return tx.writable }
 
 func (tx *Tx) Meta() Meta { return tx.d.Meta }
-
-/*
-func (tx *Tx) Get(k []byte) []byte                 { return tx.b.Get(k) }
-func (tx *Tx) Put(k, v []byte) error               { return tx.b.Put(k, v) }
-func (tx *Tx) Del(k []byte) error                  { return tx.b.Del(k) }
-func (tx *Tx) Bucket(k []byte) *SimpleBucket             { return tx.b.Bucket(k) }
-func (tx *Tx) PutBucket(k []byte) (*Bucket, error) { return tx.b.PutBucket(k) }
-func (tx *Tx) DelBucket(k []byte) error            { return tx.b.DelBucket(k) }
-*/

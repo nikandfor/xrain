@@ -51,7 +51,7 @@ type (
 		root int64
 		Meta
 
-		metaLayout *SubpageLayout
+		metaLayout SubpageLayout
 
 		NoSync bool
 
@@ -102,6 +102,7 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 		l: l,
 		Meta: Meta{
 			Back: b,
+			Page: page,
 		},
 		keepl:    make(map[int64]int),
 		kRTx:     []byte("stats.rtx"),
@@ -110,7 +111,7 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 		kRWTxErr: []byte("stats.rwtxerr"),
 	}
 
-	// root = 4 * page
+	// root = NilPage
 
 	d.metaLayout = NewSubpageLayout(nil)
 
@@ -123,14 +124,14 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 		return nil, err
 	}
 
-	d.Meta.Meta = NewLayoutShortcut(d.metaLayout, 0, d.Mask)
+	d.Meta.Meta = NewLayoutShortcut(&d.metaLayout, 0, d.Mask)
 
 	//	fll := NewFixedLayout(&d.Meta)
 	//	d.Freelist, err = NewFreelist2(&d.Meta, fll, 5*d.Page, 6*d.Page)
 	//	if err != nil {
 	//		return
 	//	}
-	d.Freelist = NewFreelist3(&d.Meta, 5*d.Page)
+	d.Freelist = NewFreelist3(&d.Meta, 4*d.Page)
 
 	l.SetMeta(&d.Meta)
 
@@ -142,10 +143,11 @@ func NewDB(b Back, page int64, l Layout) (_ *DB, err error) {
 
 func (d *DB) View(f func(tx *Tx) error) (err error) {
 	d.mu.Lock()
-	root := d.root
 	ver := d.okver
 	d.keepl[ver]++
 	//	tlog.Printf("View      %2d  %v", ver, d.keepl)
+
+	l, root := d.rootBucket()
 	d.mu.Unlock()
 
 	defer func() {
@@ -157,15 +159,18 @@ func (d *DB) View(f func(tx *Tx) error) (err error) {
 		d.mu.Unlock()
 	}()
 
-	tx := newTx(d, d.l, root, false)
-	defer tx.free()
+	tx := newTx(d, l, root, false)
 
 	err = f(tx)
 
+	tx.free()
+
+	d.mu.Lock()
 	d.metric(d.kRTx, 1)
 	if err != nil {
 		d.metric(d.kRTxErr, 1)
 	}
+	d.mu.Unlock()
 
 	return err
 }
@@ -177,10 +182,12 @@ func (d *DB) Update(f func(tx *Tx) error) (err error) {
 		err = d.update1(f)
 	}
 
+	d.mu.Lock()
 	d.metric(d.kRWTx, 1)
 	if err != nil {
 		d.metric(d.kRWTxErr, 1)
 	}
+	d.mu.Unlock()
 
 	return
 }
@@ -194,17 +201,20 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 	d.updateKeep()
 	d.Ver++
 	write := d.write
+
+	l, root := d.rootBucket()
 	d.mu.Unlock()
 
-	tx := newTx(d, d.l, d.root, true)
-	defer tx.free()
+	tx := newTx(d, l, root, true)
 
 	err = f(tx)
 	if err != nil {
 		return err
 	}
 
-	err = d.writeRoot(write, d.Ver, tx.oldroot)
+	tx.free()
+
+	err = d.writeRoot(write, d.Ver, tx.rootbuf)
 	if err != nil {
 		return
 	}
@@ -218,7 +228,7 @@ func (d *DB) update0(f func(tx *Tx) error) (err error) {
 
 	d.mu.Lock()
 	d.okver = d.Ver
-	d.root = tx.oldroot
+	d.root = tx.rootbuf
 	d.safe = write
 	d.write = d.safe + 1
 	d.mu.Unlock()
@@ -235,26 +245,31 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	d.updateKeep()
 	d.Ver++
 	write := d.write
+
+	l, root := d.rootBucket()
 	d.mu.Unlock()
 
-	tx := newTx(d, d.l, d.root, true)
-	defer tx.free()
+	tx := newTx(d, l, root, true)
 
 	err = f(tx)
 	if err != nil {
 		return err
 	}
 
+	d.mu.Lock()
+	tx.free()
+
 	//	tlog.Printf("Update %2d %2d  %2d\n%v", ver, keep, batch, dumpFile(d.t.PageLayout()))
 
-	err = d.writeRoot(write, d.Ver, tx.oldroot)
+	err = d.writeRoot(write, d.Ver, tx.rootbuf)
+	d.mu.Unlock()
 	if err != nil {
 		return
 	}
 
 	d.mu.Lock()
 	d.okver = d.Ver
-	d.root = tx.oldroot
+	d.root = tx.rootbuf
 	d.mu.Unlock()
 
 	err = d.batch.Wait(batch)
@@ -263,6 +278,27 @@ func (d *DB) update1(f func(tx *Tx) error) (err error) {
 	}
 
 	return nil
+}
+
+func (d *DB) rootBucket() (Layout, int64) {
+	if d.root != NilPage {
+		return d.l, d.root
+	}
+
+	v := bsPool.Get().([]byte)[:0]
+
+	var eq bool
+	d.stbuf, eq = d.Meta.Meta.Layout.Seek(d.stbuf, 0, []byte("root"), nil)
+	if eq {
+		v = d.Meta.Meta.Layout.Value(d.stbuf, v)
+	}
+
+	l := NewSubpageLayout(v)
+
+	return &l, 0
+}
+
+func (d *DB) releaseRootBucket(l Layout, root int64) {
 }
 
 func (d *DB) metric(k []byte, v int) {
@@ -331,10 +367,10 @@ func (d *DB) initEmpty() (err error) {
 		d.Page = DefaultPageSize
 	}
 
-	d.root = 4 * d.Page
+	d.root = NilPage
 	d.Mask = d.Page - 1
 
-	err = d.b.Truncate(6 * d.Page)
+	err = d.b.Truncate(4 * d.Page)
 	if err != nil {
 		return
 	}
@@ -435,7 +471,7 @@ func DumpDB(d *DB) string {
 }
 
 func DumpBucket(b *SimpleBucket) string {
-	return fmt.Sprintf("root %6x %6x name %q", b.oldroot, b.t.Root, b.name)
+	return fmt.Sprintf("root %6x %6x name %q", b.rootbuf, b.t.Root, b.name)
 }
 
 func DumpPage(l Layout, off int64) string {

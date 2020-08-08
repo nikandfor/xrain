@@ -30,7 +30,7 @@ var _ Freelist = &Freelist3{}
 
 func NewFreelist3(m *Meta, next int64) *Freelist3 {
 	l := &Freelist3{
-		l:         *NewSubpageLayout(nil),
+		l:         NewSubpageLayout(nil),
 		Meta:      m,
 		next:      next,
 		buf:       make([]byte, 16),
