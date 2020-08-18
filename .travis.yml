@@ -3,8 +3,17 @@ language: go
 env:
   - GO111MODULE=on
 
+arch:
+  - amd64
+
 go:
-  - "1.12"
+  - "1.15"
+  - "1.14"
+  - "1.13"
+
+jobs:
+  include:
+    - os: windows
 
 script:
   - go test -race -coverprofile=coverage.txt -covermode=atomic ./...
