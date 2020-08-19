@@ -667,7 +667,7 @@ func (l *FixedLayout) out(s Stack, off0, off1 int64, di int, rebalance bool) (_ 
 			return
 		}
 
-		if tl.V("out").If(off1 != NilPage) != nil {
+		if off1 != NilPage && tl.If("out") {
 			tl.Printf("out split %x -> %x %x  split %d", off, off0, off1, split)
 		}
 

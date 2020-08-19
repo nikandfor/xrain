@@ -8,6 +8,8 @@ import (
 	"hash/crc32"
 	"sort"
 	"strings"
+
+	"github.com/nikandfor/tlog/ext/tlargs"
 )
 
 type (
@@ -230,8 +232,11 @@ func (l *BaseLayout2) Seek(st Stack, root int64, k, v []byte) (_ Stack, eq bool)
 		i, n, coff, eq, isleaf = l.searchf(off, k, v)
 
 		if tl.V("seek") != nil {
-			tl.If(isleaf).Printf("seek root %3x  off %3x ->      i %2d / %2d  eq %5v  - leaf", root, off, i, n, eq)
-			tl.If(!isleaf).Printf("seek root %3x  off %3x -> %3x  i %2d / %2d            - branch", root, off, coff, i, n)
+			if isleaf {
+				tl.Printf("seek root %3x  off %3x ->      i %2d / %2d  eq %5v  - leaf", root, off, i, n, eq)
+			} else {
+				tl.Printf("seek root %3x  off %3x -> %3x  i %2d / %2d            - branch", root, off, coff, i, n)
+			}
 		}
 
 		if !isleaf && i == n {
@@ -1505,8 +1510,8 @@ func (l *KVLayout2) pageDelete(p []byte, i, n int) {
 		dend := l.dataend(p, i)
 		diff := dend - end
 
-		if tl.V("delete") != nil {
-			tl.Printf("delete %d / %d  move %x-%x <- %x-%x %v", i, n, st+diff, st+diff+end-st, st, end, tl.VArg("delete_dump", "\n"+hex.Dump(p), ""))
+		if tl.If("delete") {
+			tl.Printf("delete %d / %d  move %x-%x <- %x-%x %v", i, n, st+diff, st+diff+end-st, st, end, tlargs.IfV(tl, "delete_dump", "\n"+hex.Dump(p), ""))
 		}
 
 		copy(p[st+diff:], p[st:end])

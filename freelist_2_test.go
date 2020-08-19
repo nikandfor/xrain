@@ -394,7 +394,9 @@ func TestFreelist2Auto(t *testing.T) {
 			t.Fail()
 		}
 
-		tl.If(eq == "!=" || pr != (tl.V("each").Valid())).Printf("tree %2x + free %3x (%.2f) + used %4x (%.2f) %s file size %x", tree, free, float64(free)/tot, used, float64(used)/tot, eq, npages)
+		if eq == "!=" || pr != tl.V("each").Valid() {
+			tl.Printf("tree %2x + free %3x (%.2f) + used %4x (%.2f) %s file size %x", tree, free, float64(free)/tot, used, float64(used)/tot, eq, npages)
+		}
 
 		if pr != (tl.V("each").Valid()) {
 			tl.V("dump,check_dump").Printf("\n%v", l.dumpFile())

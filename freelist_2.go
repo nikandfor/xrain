@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 
 	"github.com/nikandfor/tlog"
+	"github.com/nikandfor/tlog/ext/tlargs"
 )
 
 const (
@@ -142,7 +143,7 @@ func (f *Freelist2) flush() (err error) {
 func (f *Freelist2) Alloc(n int) (off int64, err error) {
 	if tl.V("alloc") != nil {
 		tl.Printf("alloc: %2x   ??   ??  ver %x/%x next %x  def %x[%d:] from %#v %#v", n, f.Ver, f.Keep, f.next, f.deferred, f.defi,
-			tl.VArg("where,where2", tlog.StackTrace(1, 4), ""), tl.VArg("where2", tlog.StackTrace(5, 4), ""))
+			tlargs.IfV(tl, "where,where2", tlog.StackTrace(1, 4), ""), tlargs.IfV(tl, "where2", tlog.StackTrace(5, 4), ""))
 
 		defer func() {
 			tl.Printf("alloc: %2x %4x   ??  ver %x/%x next %x  def %x[%d:]", n, off, f.Ver, f.Keep, f.next, f.deferred, f.defi)
@@ -242,7 +243,7 @@ func (f *Freelist2) Free(off, ver int64, n int) (err error) {
 	var sz uint
 	if tl.V("free") != nil {
 		tl.Printf("freei: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]  from %#v %#v", n, off, ver, f.Ver, f.Keep, f.next, f.deferred, f.defi,
-			tl.VArg("where,where2", tlog.StackTrace(1, 4), ""), tl.VArg("where2", tlog.StackTrace(5, 4), ""))
+			tlargs.IfV(tl, "where,where2", tlog.StackTrace(1, 4), ""), tlargs.IfV(tl, "where2", tlog.StackTrace(5, 4), ""))
 
 		defer func() {
 			tl.Printf("freeo: %2x %4x %4x  ver %x/%x next %x  def %x[%d:]", 1<<sz, off, ver, f.Ver, f.Keep, f.next, f.deferred, f.defi)
@@ -320,7 +321,7 @@ fin:
 
 func (f *Freelist2) unlock() (err error) {
 	if tl.V("unlock") != nil {
-		tl.Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.next, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tl.VArg("where", tlog.StackTrace(1, 2), ""))
+		tl.Printf("unlock: next %x/%x  deff %x  ver %d/%d  lock %v  from %#v", f.next, f.flen, f.deferred, f.Ver, f.Keep, f.lock, tlargs.IfV(tl, "where", tlog.StackTrace(1, 2), ""))
 	}
 
 	if f.lock {
