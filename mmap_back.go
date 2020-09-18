@@ -32,7 +32,7 @@ func Mmap(n string, flags int) (*MmapBack, error) {
 		return nil, err
 	}
 
-	return MmapFile(f, flags&os.O_WRONLY == os.O_WRONLY)
+	return MmapFile(f, flags&os.O_WRONLY == os.O_WRONLY || flags&os.O_RDWR == os.O_RDWR)
 }
 
 func MmapFile(f *os.File, rw bool) (_ *MmapBack, err error) {
@@ -91,18 +91,22 @@ func (b *MmapBack) mmap(off, len int64) (err error) {
 	return nil
 }
 
-func (b *MmapBack) Access(off, l int64) []byte {
+func (b *MmapBack) Access(off, l int64) (p []byte) {
 	b.mu.RLock()
 
 	if tl.V("back,access") != nil {
 		tl.Printf("back access   %5x %5x", off, l)
 	}
 
-	if off == NilPage || l == 0 {
-		return nil
+	if off != NilPage && l != 0 {
+		if int(off+l) > len(b.d) {
+			b.mu.RUnlock()
+		}
+
+		p = b.d[off : off+l : off+l]
 	}
 
-	return b.d[off : off+l : off+l]
+	return
 }
 
 func (b *MmapBack) Access2(off, l, off2, l2 int64) (p, p2 []byte) {
@@ -113,10 +117,18 @@ func (b *MmapBack) Access2(off, l, off2, l2 int64) (p, p2 []byte) {
 	}
 
 	if off != NilPage && l != 0 {
+		if int(off+l) > len(b.d) {
+			b.mu.RUnlock()
+		}
+
 		p = b.d[off : off+l : off+l]
 	}
 
 	if off2 != NilPage && l2 != 0 {
+		if int(off2+l2) > len(b.d) {
+			b.mu.RUnlock()
+		}
+
 		p2 = b.d[off2 : off2+l2 : off2+l2]
 	}
 

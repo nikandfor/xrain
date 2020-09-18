@@ -569,7 +569,7 @@ again:
 			}
 		}
 
-		if dst+kl >= len(p) {
+		if dst+kl > len(p) {
 			remount = true
 			return
 		}
@@ -586,7 +586,7 @@ again:
 
 func (l *KVLayout2) Value(st Stack, buf []byte) []byte {
 	off, i := st.LastOffIndex(l.Mask)
-	return l.value(off, i, nil)
+	return l.value(off, i, buf)
 }
 
 func (l *KVLayout2) value(off int64, i int, buf []byte) (val []byte) {

@@ -1,6 +1,7 @@
 package xrain
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -11,7 +12,10 @@ import (
 	"github.com/nikandfor/tlog"
 )
 
-const Version = "000"
+const ( // Magic number
+	Magic   = "xrain"
+	Version = "000"
+)
 
 var (
 	DefaultPageSize int64 = 4 * KB
@@ -29,7 +33,10 @@ var (
 )
 
 var ( // errors
-	ErrPageChecksum = errors.New("page checksum mismatch")
+	ErrNotXRain                     = errors.New("this is not xrain db file")
+	ErrUnsupportedFileFormatVersion = errors.New("unsupported file format version")
+	ErrZeroPageSize                 = errors.New("zero page size in file")
+	ErrPageChecksum                 = errors.New("page checksum mismatch")
 )
 
 /*
@@ -375,8 +382,8 @@ func (d *DB) initEmpty() (err error) {
 		return
 	}
 
-	h0 := fmt.Sprintf("xrain%3s%7x\n", Version, d.Page)
-	if len(h0) != 16 {
+	h0 := fmt.Sprintf("%s%s%7x\n", Magic, Version, d.Page)
+	if len(h0)%0x10 != 0 {
 		panic(len(h0))
 	}
 
@@ -413,7 +420,20 @@ again:
 		p := d.b.Access(0, 4*d.Page)
 		defer d.b.Unlock(p)
 
+		if !bytes.Equal(p[:len(Magic)], []byte(Magic)) {
+			err = ErrNotXRain
+			return
+		}
+		if !bytes.Equal(p[len(Magic):len(Magic)+len(Version)], []byte(Version)) {
+			err = ErrUnsupportedFileFormatVersion
+			return
+		}
+
 		page := int64(binary.BigEndian.Uint64(p[0x18:]))
+		if page == 0 {
+			err = ErrZeroPageSize
+			return
+		}
 		if page != d.Page {
 			d.Page = page
 			retry = true
