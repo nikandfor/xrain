@@ -22,7 +22,7 @@ func debugDump(w io.Writer, d int, bk *SimpleBucket) {
 		b, ff := t.Key(st, b[:0])
 
 		if ff == 1 {
-			fmt.Fprintf(w, "%v%16.16x  |  %-40.40q (%4d) st %v --->\n", pad[:d*4], b, b, len(b), st)
+			fmt.Fprintf(w, "%v%16.16x  |  %-40.40q (%4d) st %v (depth %v)--->\n", pad[:d*4], b, b, len(b), st, d)
 
 			debugDump(w, d+1, bk.Bucket(b))
 		} else {
