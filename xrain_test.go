@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
+	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -478,5 +479,10 @@ func TestMain(m *testing.M) {
 }
 
 func initLogger(t testing.TB) {
-	tl = tlog.NewTestLogger(t, *flagv, *tostderr)
+	var w io.Writer
+	if *tostderr {
+		w = tlog.Stderr
+	}
+
+	tl = tlog.NewTestLogger(t, *flagv, w)
 }

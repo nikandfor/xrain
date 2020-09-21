@@ -1,4 +1,4 @@
-[![Documentation](https://godoc.org/github.com/nikandfor/xrain?status.svg)](http://godoc.org/github.com/nikandfor/xrain)
+[![Documentation](https://pkg.go.dev/badge/github.com/nikandfor/xrain)](http://pkg.go.dev/github.com/nikandfor/xrain)
 [![Build Status](https://travis-ci.com/nikandfor/xrain.svg?branch=master)](https://travis-ci.com/nikandfor/xrain)
 [![CircleCI](https://circleci.com/gh/nikandfor/xrain.svg?style=svg)](https://circleci.com/gh/nikandfor/xrain)
 [![codecov](https://codecov.io/gh/nikandfor/xrain/branch/master/graph/badge.svg)](https://codecov.io/gh/nikandfor/xrain)

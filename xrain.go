@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"sync"
 	"testing"
 
@@ -503,7 +504,7 @@ func DumpPage(l Layout, off int64) string {
 	return d.dumpPage(off)
 }
 
-func InitTestLogger(t testing.TB, v string, tostderr bool) *tlog.Logger {
+func InitTestLogger(t testing.TB, v string, tostderr io.Writer) *tlog.Logger {
 	tl = tlog.NewTestLogger(t, v, tostderr)
 	return tl
 }
